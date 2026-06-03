@@ -300,7 +300,7 @@ def handle_anomaly(user_text, top_n=6):
         label  = "big-budget box-office flops"
     elif any(k in t for k in ["hidden gem","underrated","unknown"]):
         subset = anomalies[(anomalies["vote_average"] >= 7.5) &
-                           (anomalies["vote_count"] < 500)]
+                           (anomalies["vote_count"] < anomalies["vote_count"].quantile(0.4))]
         label  = "hidden gems (high rating, few votes)"
     elif any(k in t for k in ["long","short","runtime"]):
         subset = anomalies[(anomalies["runtime"] > 180) | (anomalies["runtime"] < 60)]
