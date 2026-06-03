@@ -324,7 +324,7 @@ def handle_anomaly(user_text, top_n=6):
             "director": row["director"],
             "rating"  : round(float(row["vote_average"]), 1),
             "overview": row["overview"][:200] + "..." if len(row["overview"]) > 200 else row["overview"],
-            "score"   : round(float(row["anomaly_score"]), 3),
+            "score"   : round(float(row["vote_average"]), 1),
         })
 
     return {"intent":"anomaly",
@@ -864,7 +864,7 @@ function renderCards(results) {
         <div class="card-genres">${r.genres}</div>
         <div class="card-overview">${r.overview}</div>
       </div>
-      <div class="card-score">score<br>${r.score}</div>
+      <div class="card-score">rating<br>${r.score}</div>
     </div>`).join("")}</div>`;
 }
 
