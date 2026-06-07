@@ -216,6 +216,38 @@ def index():
 def api_key_route():
     return jsonify({"key": os.environ.get("ANTHROPIC_API_KEY","")})
 
+def call_claude(user_text, results, intent):
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key or not results:
+        return None
+    try:
+        import urllib.request
+        movies = ""
+        for r in results[:5]:
+            movies += "- " + r["title"] + " (" + str(r["year"]) + "): " + r["genres"] + ", " + str(r["rating"]) + "/10\n"
+        prompt = 'User asked: "' + user_text + '". Movies found:\n' + movies + 'Write 2-3 friendly sentences recommending these, mention 1-2 by name.'
+        payload = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 200,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read())
+            return data["content"][0]["text"]
+    except Exception as e:
+        print("Claude error:", e)
+        return None
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json()
@@ -223,10 +255,14 @@ def chat():
     if not user_text:
         return jsonify({"reply":"Please type something!","results":[]})
     intent, payload = detect_intent(user_text)
-    if intent == "similar":      result = handle_similar(payload)
-    elif intent == "anomaly":    result = handle_anomaly(user_text)
+    if intent == "similar":        result = handle_similar(payload)
+    elif intent == "anomaly":      result = handle_anomaly(user_text)
     elif intent == "cluster_info": result = handle_cluster_info(user_text)
-    else:                        result = handle_search(user_text)
+    else:                          result = handle_search(user_text)
+    if intent != "cluster_info":
+        claude_reply = call_claude(user_text, result.get("results", []), intent)
+        if claude_reply:
+            result["claude_reply"] = claude_reply
     return jsonify(result)
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -389,41 +425,6 @@ function buildClusters(clusters) {
   return h;
 }
 
-function callClaude(userText, results, intent) {
-  if (!results || !results.length) return;
-  fetch('/api-key')
-    .then(function(r){ return r.json(); })
-    .then(function(kd){
-      var key = kd.key || '';
-      if (!key) return;
-      var movies = '';
-      for (var i=0; i<Math.min(results.length,5); i++) {
-        movies += '- ' + results[i].title + ' (' + results[i].year + '): ' + results[i].genres + ', ' + results[i].rating + '/10\\n';
-      }
-      var prompt = 'User asked: "' + userText + '". Movies found:\\n' + movies + 'Write 2-3 friendly sentences recommending these, mention 1-2 by name.';
-      fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': key,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 200,
-          messages: [{ role: 'user', content: prompt }]
-        })
-      })
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        if (data.content && data.content[0]) {
-          addMsg('bot', '<div class="claude-bubble"><div class="claude-label">&#10022; Claude AI</div>' + data.content[0].text + '</div>');
-        }
-      })
-      .catch(function(e){ console.log('Claude error', e); });
-    })
-    .catch(function(e){ console.log('Key error', e); });
-}
 
 function send() {
   var text = I.value.trim();
@@ -441,8 +442,11 @@ function send() {
     rmTyping();
     var extra = data.intent === 'cluster_info' ? buildClusters(data.clusters) : buildCards(data.results);
     addMsg('bot', '<div class="bubble">' + data.reply + '</div>' + extra);
-    if (data.intent !== 'cluster_info') {
-      setTimeout(function(){ callClaude(text, data.results, data.intent); }, 500);
+    if (data.claude_reply) {
+      setTimeout(function(){
+        addMsg('bot', '<div class="claude-bubble"><div class="claude-label">&#10022; Claude AI</div>' + data.claude_reply + '</div>');
+        M.scrollTop = M.scrollHeight;
+      }, 300);
     }
   })
   .catch(function(e){
