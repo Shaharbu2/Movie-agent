@@ -465,7 +465,7 @@ def handle_search(user_text, top_n=3):
             return empty_result("search", year=year, platform=platform, genres=matched_genres)
 
         results = [
-            row_to_result(i + 1, idx, row["vote_average"] / 10)
+            row_to_result(i + 1, idx, round(float(row["vote_average"]) / 10, 3))
             for i, (idx, row) in enumerate(ranked.iterrows())
         ]
     else:
@@ -655,7 +655,8 @@ Important rules:
 - Recommendations must be based ONLY on the provided dataset results.
 - Do not invent movie titles.
 - Do not add movies that are not in the dataset results.
-- If no dataset results were found, politely say that no suitable match was found and suggest changing the movie name, year, genre, or platform.
+- CRITICAL: If dataset results ARE provided, you MUST present them as recommendations. Never say "no results found" or "I couldn't find" when results are listed above.
+- If no dataset results were found (the list says "No dataset results were found"), ONLY THEN say no suitable match was found and suggest changing the movie name, year, genre, or platform.
 - Write only ONE answer. Do not duplicate sections.
 - Match the user's language: Hebrew if the user writes Hebrew, English if the user writes English.
 - Keep the answer friendly, concise, and useful.
