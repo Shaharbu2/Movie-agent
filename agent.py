@@ -64,7 +64,7 @@ df["release_year"] = df["release_year"].astype(np.int16)
 
 
 # ==============================================================
-# 2. HELPERS
+# 2. BASIC HELPERS
 # ==============================================================
 
 def clean_text(text):
@@ -93,7 +93,7 @@ def is_hebrew(text):
 
 
 # ==============================================================
-# 3. FEATURE PREPARATION
+# 3. MODELS: CLUSTERING + TF-IDF + SIMILARITY + ANOMALY
 # ==============================================================
 
 numeric_features = ["vote_average", "popularity", "runtime", "vote_count"]
@@ -117,11 +117,11 @@ kmeans = MiniBatchKMeans(
 df["cluster"] = kmeans.fit_predict(cluster_data).astype(np.int8)
 
 CLUSTER_NAMES = {
-    0: "דרמה / פשע / היסטוריה",
-    1: "קומדיה / רומנטיקה",
-    2: "אקשן / מדע בדיוני / מתח",
-    3: "משפחה / אנימציה / פנטזיה",
-    4: "אימה / מסתורין / מתח"
+    0: "Drama / Crime / History",
+    1: "Comedy / Romance",
+    2: "Action / Sci-Fi / Thriller",
+    3: "Family / Animation / Fantasy",
+    4: "Horror / Mystery / Thriller"
 }
 
 overview_clean_list = [clean_text(x) for x in df["overview"].tolist()]
@@ -135,12 +135,8 @@ tfidf = TfidfVectorizer(
 
 tfidf_matrix = tfidf.fit_transform(overview_clean_list)
 
+# Main similarity model for "similar movies"
 sim_data_sparse = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr")
-
-
-# ==============================================================
-# 4. ANOMALY DETECTION
-# ==============================================================
 
 iso_features = ["popularity", "vote_average", "vote_count", "runtime"]
 
@@ -159,8 +155,13 @@ df["anomaly_score"] = iso.decision_function(iso_scaled).astype(np.float32)
 
 
 # ==============================================================
-# 5. INTENT AND FILTERS
+# 4. INTENT + FILTER DETECTION
 # ==============================================================
+
+SMALLTALK_WORDS = [
+    "hi", "hello", "hey", "good morning", "good evening",
+    "היי", "הי", "שלום", "מה קורה", "מה נשמע", "בוקר טוב", "ערב טוב"
+]
 
 GENRE_KEYWORD_MAP = {
     "action": "Action", "אקשן": "Action",
@@ -209,6 +210,11 @@ MOVIE_WORDS = [
 ]
 
 
+def is_smalltalk(text):
+    t = text.lower().strip()
+    return t in SMALLTALK_WORDS
+
+
 def extract_genres(text):
     t = text.lower()
     matched = set()
@@ -242,6 +248,9 @@ def extract_platform(text):
 def is_movie_related(text):
     t = text.lower().strip()
 
+    if is_smalltalk(t):
+        return True
+
     if extract_year(t) or extract_platform(t) or extract_genres(t):
         return True
 
@@ -249,27 +258,41 @@ def is_movie_related(text):
 
 
 def detect_intent(text):
-    t = text.lower()
+    t = text.lower().strip()
+
+    if is_smalltalk(t):
+        return "smalltalk", text
 
     similar_patterns = [
         r"similar to (.+)",
         r"movies like (.+)",
         r"like the movie (.+)",
-        r"like (.+)",
+        r"i liked (.+)",
+        r"i like (.+)",
         r"דומה ל(.+)",
         r"סרטים כמו (.+)",
-        r"כמו (.+)"
+        r"כמו (.+)",
+        r"אהבתי את (.+)"
     ]
 
     for pattern in similar_patterns:
         match = re.search(pattern, t)
         if match:
             movie_title = match.group(1).strip().rstrip("?.,!")
-            movie_title = re.split(r"\b(and|with|from|on)\b|ו|עם|משנת|בנטפליקס|בדיסני", movie_title)[0].strip()
+            movie_title = re.split(
+                r"\b(and|with|from|on|that|which)\b|ו|עם|משנת|בנטפליקס|בדיסני|שיהיה|שרוצה",
+                movie_title
+            )[0].strip()
             return "similar", movie_title
 
-    if any(k in t for k in ["anomaly", "unusual", "outlier", "hidden gem", "underrated",
-                            "חריג", "חריגות", "מוזר", "יהלום נסתר", "מוערך בחסר"]):
+    anomaly_words = [
+        "anomaly", "anomalies", "unusual", "outlier",
+        "hidden gem", "underrated", "flop", "long movie", "short movie",
+        "חריג", "חריגות", "מוזר", "יהלום נסתר", "מוערך בחסר", "פלופ",
+        "סרטים ארוכים", "סרטים קצרים"
+    ]
+
+    if any(k in t for k in anomaly_words):
         return "anomaly", text
 
     if any(k in t for k in ["cluster", "clusters", "קלאסטר", "קלאסטרים", "קבוצה", "קבוצות"]):
@@ -285,6 +308,7 @@ def apply_filters(base_df, text):
     platform = extract_platform(text)
 
     if year is not None:
+        # Important: year means "from this year and above"
         filtered = filtered[filtered["release_year"] >= year]
 
     if platform is not None and platform in filtered.columns:
@@ -324,22 +348,27 @@ def row_to_result(rank, idx, score=0):
     }
 
 
-def no_relevant_answer():
+def no_relevant_answer(intent="no_answer"):
     return {
-        "intent": "no_answer",
+        "intent": intent,
         "reply": "",
         "results": []
     }
 
 
 # ==============================================================
-# 6. HANDLERS
+# 5. HANDLERS
 # ==============================================================
 
-def handle_search(user_text, top_n=3):
-    if not is_movie_related(user_text):
-        return no_relevant_answer()
+def handle_smalltalk(user_text):
+    return {
+        "intent": "smalltalk",
+        "reply": "",
+        "results": []
+    }
 
+
+def handle_search(user_text, top_n=3):
     filtered, year, platform = apply_filters(df, user_text)
 
     matched_genres = extract_genres(user_text)
@@ -376,7 +405,6 @@ def handle_search(user_text, top_n=3):
     cluster_scores = filtered["cluster"].apply(
         lambda c: 1.0 if c in matched_clusters else 0.0
     ).values
-
     tfidf_scores = tfidf_scores_all[indices]
 
     combined = (
@@ -388,12 +416,12 @@ def handle_search(user_text, top_n=3):
     has_clear_filter = bool(year or platform or matched_genres)
 
     if len(combined) == 0:
-        return no_relevant_answer()
+        return no_relevant_answer("search")
 
     best_score = float(combined.max())
 
     if not has_clear_filter and best_score < 0.08:
-        return no_relevant_answer()
+        return no_relevant_answer("search")
 
     if has_clear_filter and best_score == 0:
         ranked = filtered.sort_values(
@@ -402,7 +430,7 @@ def handle_search(user_text, top_n=3):
         ).head(top_n)
 
         if ranked.empty:
-            return no_relevant_answer()
+            return no_relevant_answer("search")
 
         results = [
             row_to_result(i + 1, idx, row["vote_average"] / 10)
@@ -418,7 +446,7 @@ def handle_search(user_text, top_n=3):
         ]
 
         if not chosen:
-            return no_relevant_answer()
+            return no_relevant_answer("search")
 
         results = [
             row_to_result(i + 1, indices[pos], combined[pos])
@@ -593,7 +621,7 @@ def handle_cluster_info():
 
 
 # ==============================================================
-# 7. OPENAI RESPONSE
+# 6. OPENAI RESPONSE
 # ==============================================================
 
 def call_openai(user_text, result):
@@ -607,6 +635,7 @@ def call_openai(user_text, result):
         lang = "Hebrew" if is_hebrew(user_text) else "English"
 
         results = result.get("results", [])
+        clusters = result.get("clusters", [])
         intent = result.get("intent", "search")
 
         movies_text = ""
@@ -621,32 +650,67 @@ def call_openai(user_text, result):
                     f"streaming: {streaming}, "
                     f"score: {r['score']}\n"
                 )
+        elif clusters:
+            for c in clusters:
+                movies_text += (
+                    f"- Cluster {c['cluster']}: {c['name']}, "
+                    f"{c['count']} movies, top genres: {c['top_genres']}, "
+                    f"average rating: {c['avg_rating']}\n"
+                )
         else:
             movies_text = "No matching movies were found in the dataset."
 
-        system_prompt = (
-            "You are a movie recommendation agent only. "
-            "You must answer only questions related to movies, genres, movie recommendations, "
-            "streaming platforms, ratings, similarity, clustering or anomaly detection in the movie dataset. "
-            "Do not answer weather, politics, health, general knowledge or unrelated questions. "
-            "Use only the provided dataset results. "
-            "Do not invent movies. "
-            "If no results were found, politely say that no suitable movies were found and suggest changing the year, genre or platform. "
-            "Do not write duplicate sections. "
-            "Do not say 'here are three movies' if there are no results. "
-            "If there are results, write a short friendly explanation and refer to the movies below."
-        )
+        system_prompt = """
+You are MovieMate, an intelligent and friendly movie recommendation agent.
+
+Your purpose is to help users discover movies from the provided movie dataset.
+
+General behavior:
+- Be friendly, conversational and natural.
+- Respond naturally to greetings, introductions and casual conversation.
+- Keep the conversation focused on movies and entertainment.
+- If the user asks something unrelated to movies, politely explain that you specialize in movies and guide them back to movie-related topics.
+
+Movie recommendations:
+- Use ONLY the movies provided in the dataset results.
+- Never invent movie titles.
+- Never recommend movies that were not returned by the recommendation engine.
+- If no matching movies were found, explain that no suitable movies were found and suggest changing filters such as year, genre, platform or movie title.
+
+Anomaly detection:
+- Explain anomalies only when the intent is anomaly.
+- Anomalies may refer to hidden gems, underrated movies, flops, very long movies, very short movies, or statistically unusual movies.
+- Do not mention anomalies unless the user asked about them.
+
+Language:
+- If the user writes in Hebrew, answer in Hebrew.
+- If the user writes in English, answer in English.
+- Match the user's tone and language naturally.
+
+When movie results exist:
+- Give a short explanation first.
+- Then present the recommended movies naturally.
+- Mention streaming availability only if it exists in the provided results.
+
+When no movie results exist:
+- Explain politely that no suitable movies were found.
+- Suggest alternative search criteria.
+
+Never repeat yourself.
+Never generate duplicate sections.
+Keep answers concise and helpful.
+"""
 
         user_prompt = (
             f"Answer language: {lang}\n"
             f"User question: {user_text}\n"
             f"Detected intent: {intent}\n"
-            f"Detected year: {result.get('year')}\n"
-            f"Detected platform: {result.get('platform')}\n"
+            f"Detected year filter: {result.get('year')}\n"
+            f"Detected platform filter: {result.get('platform')}\n"
             f"Detected genres: {result.get('genres')}\n\n"
             f"Dataset results:\n{movies_text}\n\n"
-            "Write one concise answer. "
-            "If there are movie results, mention the recommended titles briefly. "
+            "Write one concise answer only. "
+            "If there are movie results, mention the titles from the dataset results only. "
             "If there are no results, explain that no matching movies were found. "
             "Do not add movies that are not listed."
         )
@@ -657,8 +721,8 @@ def call_openai(user_text, result):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "max_tokens": 250,
-            "temperature": 0.4
+            "max_tokens": 270,
+            "temperature": 0.5
         }
 
         req = urllib.request.Request(
@@ -682,12 +746,29 @@ def call_openai(user_text, result):
 
 def fallback_reply(user_text, result):
     heb = is_hebrew(user_text)
+    intent = result.get("intent")
     results = result.get("results", [])
+    clusters = result.get("clusters", [])
+
+    if intent == "smalltalk":
+        if heb:
+            return "היי! 🎬 אני כאן כדי לעזור לך למצוא סרט מעולה. איזה סוג סרט בא לך לראות?"
+        return "Hi! 🎬 I’m here to help you find a great movie. What kind of movie are you looking for?"
+
+    if intent == "out_of_scope":
+        if heb:
+            return "אני מתמקד רק בסרטים ובהמלצות צפייה 🎬 אפשר לשאול אותי על ז׳אנרים, שנים, פלטפורמות או סרטים דומים."
+        return "I focus only on movies and recommendations 🎬. You can ask me about genres, years, platforms, or similar movies."
+
+    if clusters:
+        if heb:
+            return "מצאתי את קבוצות הסרטים המרכזיות במאגר."
+        return "I found the main movie clusters in the dataset."
 
     if not results:
         if heb:
-            return "לא מצאתי סרטים שמתאימים בדיוק לבקשה שלך. אפשר לנסות לשנות שנה, ז׳אנר או פלטפורמת צפייה."
-        return "I could not find movies that match your request. Try changing the year, genre, or streaming platform."
+            return "לא מצאתי סרטים שמתאימים בדיוק לבקשה שלך. אפשר לנסות לשנות שנה, ז׳אנר, פלטפורמה או שם סרט."
+        return "I could not find movies that match your request. Try changing the year, genre, platform, or movie title."
 
     titles = ", ".join([r["title"] for r in results[:3]])
 
@@ -697,7 +778,7 @@ def fallback_reply(user_text, result):
 
 
 # ==============================================================
-# 8. ROUTES
+# 7. ROUTES
 # ==============================================================
 
 @app.route("/health")
@@ -711,14 +792,8 @@ def chat():
     user_text = data.get("message", "").strip()
 
     if not user_text:
-        return jsonify({
-            "reply": "תכתבי לי איזה סרט או סוג סרט את מחפשת 🎬",
-            "results": []
-        })
-
-    if not is_movie_related(user_text):
         result = {
-            "intent": "out_of_scope",
+            "intent": "smalltalk",
             "reply": "",
             "results": []
         }
@@ -727,17 +802,29 @@ def chat():
 
     intent, payload = detect_intent(user_text)
 
-    if intent == "similar":
+    if intent == "smalltalk":
+        result = handle_smalltalk(user_text)
+
+    elif not is_movie_related(user_text):
+        result = {
+            "intent": "out_of_scope",
+            "reply": "",
+            "results": []
+        }
+
+    elif intent == "similar":
         result = handle_similar(payload, user_text)
+
     elif intent == "anomaly":
         result = handle_anomaly(user_text)
+
     elif intent == "cluster_info":
         result = handle_cluster_info()
+
     else:
         result = handle_search(user_text)
 
     result["reply"] = call_openai(user_text, result)
-
     return jsonify(result)
 
 
@@ -747,7 +834,7 @@ def index():
 
 
 # ==============================================================
-# 9. HTML
+# 8. HTML
 # ==============================================================
 
 HTML_PAGE = """
@@ -937,7 +1024,7 @@ inp.addEventListener("keydown", e => {
 
 
 # ==============================================================
-# 10. RUN
+# 9. RUN
 # ==============================================================
 
 if __name__ == "__main__":
