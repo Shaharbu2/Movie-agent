@@ -928,6 +928,7 @@ header {{
 .msg {{ display:flex; margin:12px 0; }}
 .msg.user {{ justify-content:flex-start; }}
 .msg.bot {{ justify-content:flex-end; }}
+.msg.bot.has-cards {{ flex-direction:column; align-items:flex-end; }}
 .bubble {{
   max-width:76%;
   padding:13px 16px;
@@ -939,7 +940,7 @@ header {{
 }}
 .user .bubble {{ background:linear-gradient(135deg, var(--red), var(--red2)); color:#fff; border-bottom-left-radius:4px; }}
 .bot .bubble {{ background:#f2f2f2; color:#222; border-bottom-right-radius:4px; }}
-.cards {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-top:10px; max-width:86%; }}
+.cards {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-top:10px; width:100%; }}
 .card {{ background:white; border:1px solid #eee; border-radius:16px; padding:14px; color:#222; box-shadow:0 8px 20px rgba(0,0,0,.08); }}
 .card-title {{ font-weight:900; color:#b10e15; font-size:17px; }}
 .meta {{ color:#555; font-size:13px; margin:5px 0; }}
@@ -1097,13 +1098,15 @@ function send(){{
   .then(data => {{
     rmTyping();
     const hasResults = data.results && data.results.length > 0;
+    const hasCluster = data.intent === 'cluster_info' && data.clusters && data.clusters.length > 0;
     let extra = '';
-    if (data.intent === 'cluster_info') {{
+    if (hasCluster) {{
       extra = clusters(data.clusters);
     }} else if (hasResults) {{
       extra = cards(data.results);
     }}
-    add('bot', '<div class="bubble">' + esc(data.reply) + '</div>' + extra);
+    const msgClass = (hasResults || hasCluster) ? 'bot has-cards' : 'bot';
+    add(msgClass, '<div class="bubble">' + esc(data.reply) + '</div>' + extra);
   }})
   .catch(() => {{
     rmTyping();
