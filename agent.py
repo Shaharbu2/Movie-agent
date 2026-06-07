@@ -375,89 +375,7 @@ def chat():
     else:
         result = handle_search(user_text)
 
-    # Generate Claude API natural language response
-    matched_genres = result.get("genres", [])
-    claude_reply = generate_claude_response(
-        user_text, intent, result.get("results", []), matched_genres
-    )
-    if claude_reply:
-        result["claude_reply"] = claude_reply
-
     return jsonify(result)
-
-# ==============================================================
-# 10. CLAUDE API — natural language response generator
-# ==============================================================
-
-import urllib.request
-
-def generate_claude_response(user_text, intent, results, matched_genres=None):
-    """
-    Takes our search results and asks Claude API to write
-    a natural, conversational recommendation response.
-    """
-    try:
-        if intent == "cluster_info":
-            return None  # clusters have their own UI, no need for Claude
-
-        if not results:
-            return None
-
-        # Build a summary of results for Claude
-        movies_summary = ""
-        for r in results[:5]:
-            movies_summary += f"- {r['title']} ({r['year']}) | {r['genres']} | Rating: {r['rating']}/10 | Director: {r['director']} | Overview: {r['overview'][:100]}\n"
-
-        genre_hint = f"Detected genres: {', '.join(matched_genres)}" if matched_genres else ""
-
-        if intent == "similar":
-            prompt = f"""The user asked: "{user_text}"
-We found these similar movies:
-{movies_summary}
-Write a short, enthusiastic 2-3 sentence response recommending these movies. 
-Mention 1-2 specific titles by name and say WHY they match. Be conversational and friendly. No bullet points."""
-
-        elif intent == "anomaly":
-            prompt = f"""The user asked: "{user_text}"
-We found these unusual/anomaly movies from our dataset:
-{movies_summary}
-Write a short, interesting 2-3 sentence response about these movies and what makes them unusual or special.
-Mention 1-2 specific titles. Be conversational. No bullet points."""
-
-        else:  # search
-            prompt = f"""The user asked: "{user_text}"
-{genre_hint}
-We found these matching movies:
-{movies_summary}
-Write a short, enthusiastic 2-3 sentence response recommending these movies.
-Mention 1-2 specific titles by name and say why they match the request. Be conversational and friendly. No bullet points."""
-
-        payload = {
-            "model": "claude-sonnet-4-20250514",
-            "max_tokens": 1000,
-            "messages": [{"role": "user", "content": prompt}]
-        }
-
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=json.dumps(payload).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01"
-            },
-            method="POST"
-        )
-
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read())
-            return data["content"][0]["text"]
-
-    except Exception as e:
-        print(f"Claude API error: {e}")
-        return None
-
 
 # ==============================================================
 # 11. HTML FRONTEND
@@ -530,7 +448,11 @@ header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:
     <div class="logo">Cine<span>Agent</span></div>
     <div class="tagline">AI-Powered Movie Intelligence</div>
   </div>
-  <div class="pill">● Live</div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+    <input id="apiKeyInput" type="password" placeholder="Paste Anthropic API key..." 
+      style="background:#1c1c26;border:1px solid #2a2a38;border-radius:8px;padding:7px 12px;color:#e8e8f0;font-size:.75rem;width:220px;outline:none"/>
+    <div class="pill">● Live</div>
+  </div>
 </header>
 <div class="main">
   <aside class="sidebar">
@@ -573,6 +495,34 @@ function addMessage(role,html,extra=""){const div=document.createElement("div");
 function addClaudeReply(text){const div=document.createElement("div");div.className="msg bot";div.innerHTML=`<div class="claude-bubble"><div class="claude-label">Claude AI Analysis</div>${text}</div>`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
 function addTyping(){const div=document.createElement("div");div.className="msg bot";div.id="typing";div.innerHTML=`<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
 function removeTyping(){const t=document.getElementById("typing");if(t)t.remove()}
+async function callClaudeAPI(userText, results, intent) {
+  const apiKey = document.getElementById("apiKeyInput") ? document.getElementById("apiKeyInput").value : "";
+  if (!apiKey || !results || results.length === 0) return;
+  try {
+    const movieList = results.slice(0,5).map(r => `- ${r.title} (${r.year}): ${r.genres}, rated ${r.rating}/10`).join("\n");
+    const prompt = intent === "similar"
+      ? `The user asked: "${userText}". We found these similar movies:\n${movieList}\nWrite 2-3 enthusiastic sentences recommending these movies, mentioning 1-2 by name. Be conversational.`
+      : intent === "anomaly"
+      ? `The user asked: "${userText}". We found these unusual movies:\n${movieList}\nWrite 2-3 interesting sentences about what makes them unusual. Mention 1-2 by name.`
+      : `The user asked: "${userText}". We found these matching movies:\n${movieList}\nWrite 2-3 enthusiastic sentences recommending these movies, mentioning 1-2 by name. Be conversational.`;
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 200,
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+    const data = await res.json();
+    if (data.content && data.content[0]) addClaudeReply(data.content[0].text);
+  } catch(e) { console.log("Claude API error:", e); }
+}
+
 async function sendMessage(text){
   if(!text.trim())return;
   addMessage("user",text);inputEl.value="";addTyping();
@@ -581,7 +531,7 @@ async function sendMessage(text){
     const data=await res.json();removeTyping();
     const extra=data.intent==="cluster_info"?renderClusters(data.clusters):renderCards(data.results);
     addMessage("bot",data.reply,extra);
-    if(data.claude_reply){setTimeout(()=>addClaudeReply(data.claude_reply),400)}
+    if(data.intent !== "cluster_info") setTimeout(()=>callClaudeAPI(text, data.results, data.intent), 400);
   }catch(e){removeTyping();addMessage("bot","⚠️ Something went wrong. Please try again.")}
 }
 function sendSuggestion(q){sendMessage(q)}
