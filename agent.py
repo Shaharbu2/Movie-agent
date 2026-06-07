@@ -659,6 +659,8 @@ Important rules:
 - CRITICAL: If dataset results ARE provided, you MUST present them as recommendations. Never say "no results found" or "I couldn't find" when results are listed above.
 - If no dataset results were found (the list says "No dataset results were found"), ONLY THEN say no suitable match was found and suggest changing the movie name, year, genre, or platform.
 - Write only ONE answer. Do not duplicate sections.
+- Do NOT use markdown formatting like **bold** or *italic* — write plain text only.
+- Since movie cards are shown separately, do NOT list the movie titles one by one in your text. Just write 1-2 sentences introducing the recommendations naturally, then stop.
 - Match the user's language: Hebrew if the user writes Hebrew, English if the user writes English.
 - Keep the answer friendly, concise, and useful.
 
@@ -1099,6 +1101,8 @@ function send(){{
     rmTyping();
     const hasResults = data.results && data.results.length > 0;
     const hasCluster = data.intent === 'cluster_info' && data.clusters && data.clusters.length > 0;
+    // Strip markdown bold/italic that GPT sometimes adds
+    const cleanReply = (data.reply || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
     let extra = '';
     if (hasCluster) {{
       extra = clusters(data.clusters);
@@ -1106,7 +1110,7 @@ function send(){{
       extra = cards(data.results);
     }}
     const msgClass = (hasResults || hasCluster) ? 'bot has-cards' : 'bot';
-    add(msgClass, '<div class="bubble">' + esc(data.reply) + '</div>' + extra);
+    add(msgClass, '<div class="bubble">' + esc(cleanReply) + '</div>' + extra);
   }})
   .catch(() => {{
     rmTyping();
