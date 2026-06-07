@@ -149,7 +149,7 @@ def handle_search(user_text, top_n=5):
 def handle_similar(movie_title, top_n=5):
     matches = df[df["title"].str.lower().str.contains(movie_title.lower(), na=False)]
     if matches.empty:
-        return {"intent":"similar","reply":"Sorry, I couldn't find '"+movie_title+"' in my database.","results":[]}
+        return {"intent":"similar","reply":"מצטער, לא מצאתי את הסרט '"+movie_title+"' במסד הנתונים שלי.","results":[]}
     idx    = matches.index[0]
     found  = df.loc[idx,"title"]
     scores = cosine_sim_matrix[idx].copy()
@@ -164,7 +164,7 @@ def handle_similar(movie_title, top_n=5):
             "rating":round(float(row["vote_average"]),1),
             "overview":row["overview"][:200]+"..." if len(row["overview"])>200 else row["overview"],
             "score":round(float(scores[tidx]),3)})
-    return {"intent":"similar","reply":"Here are "+str(top_n)+" movies similar to "+found+":","results":results}
+    return {"intent":"similar","reply":"הנה "+str(top_n)+" סרטים דומים ל-"+found+":","results":results}
 
 def handle_anomaly(user_text, top_n=6):
     t = user_text.lower()
@@ -195,7 +195,7 @@ def handle_anomaly(user_text, top_n=6):
             "rating":round(float(row["vote_average"]),1),
             "overview":row["overview"][:200]+"..." if len(row["overview"])>200 else row["overview"],
             "score":round(float(row["anomaly_score"]),3)})
-    return {"intent":"anomaly","reply":"Here are "+label+":","results":results}
+    return {"intent":"anomaly","reply":"הנה "+label+":","results":results}
 
 def handle_cluster_info(user_text):
     summary = []
@@ -206,7 +206,7 @@ def handle_cluster_info(user_text):
         summary.append({"cluster":c,"name":name,"count":len(subset),
             "top_genres":", ".join(top_g),
             "avg_rating":round(float(subset["vote_average"].mean()),2)})
-    return {"intent":"cluster_info","reply":"Here is a breakdown of the 5 movie clusters:","clusters":summary}
+    return {"intent":"cluster_info","reply":"הנה פירוט 5 קלסטרי הסרטים:","clusters":summary}
 
 @app.route("/")
 def index():
@@ -253,7 +253,7 @@ def call_claude(user_text, results, intent):
         movies = ""
         for r in results[:5]:
             movies += "- " + r["title"] + " (" + str(r["year"]) + "): " + r["genres"] + ", " + str(r["rating"]) + "/10\n"
-        prompt = 'User asked: "' + user_text + '". Movies found:\n' + movies + 'Write 2-3 friendly sentences recommending these, mention 1-2 by name. Do NOT use markdown, asterisks, or headers. Plain text only.'
+        prompt = 'User asked: "' + user_text + '". Movies found:\n' + movies + 'ענה בעברית בלבד. כתוב 2-3 משפטים ידידותיים שממליצים על הסרטים, ציין 1-2 סרטים בשמם. אל תשתמש ב-markdown, כוכביות או כותרות. טקסט פשוט בלבד.'
         payload = {
             "model": "claude-haiku-4-5-20251001",
             "max_tokens": 200,
@@ -284,7 +284,7 @@ def chat():
     data = request.get_json()
     user_text = data.get("message","").strip()
     if not user_text:
-        return jsonify({"reply":"Please type something!","results":[]})
+        return jsonify({"reply":"אנא הקלד משהו!","results":[]})
     intent, payload = detect_intent(user_text)
     if intent == "similar":        result = handle_similar(payload)
     elif intent == "anomaly":      result = handle_anomaly(user_text)
@@ -301,142 +301,332 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>סינמה-אייג'נט</title>
+<title>CineAgent</title>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#07080f;--surface:#0e0f1a;--card:#151622;--border:#22243a;
-  --gold:#f0c060;--gold2:#f8d98a;--text:#e8eaf6;--muted:#6068a0;
-  --accent:#4f7ef8;--green:#50e0a0;--red:#f06060;
-  --claude:#1a1535;--claude-border:rgba(240,192,96,0.3)
+  --bg:#060914;--surface:#0b0d1a;--card:#111320;--border:#1e2140;
+  --gold:#e8b84b;--gold2:#f5d07a;--text:#dde2ff;--muted:#4a5080;
+  --accent:#3d6fff;--green:#3de0a0;--claude:#0e1128;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:'Heebo',sans-serif;font-weight:300;height:100vh;display:flex;flex-direction:column;overflow:hidden;direction:rtl}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:'Heebo',sans-serif;font-weight:300;
+  direction:rtl;overflow:hidden;
+  display:flex;flex-direction:column;
+}
 
-/* HEADER */
-header{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;box-shadow:0 2px 20px rgba(0,0,0,0.4)}
-.logo{font-size:1.6rem;font-weight:900;color:var(--gold);letter-spacing:-0.5px;line-height:1}
-.logo span{color:var(--text);font-weight:300}
-.tagline{font-size:.7rem;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:2px}
-.badge{margin-right:auto;background:rgba(80,224,160,0.1);color:var(--green);font-size:.65rem;padding:4px 12px;border-radius:20px;border:1px solid rgba(80,224,160,0.25);font-weight:500}
-.badge::before{content:"● ";font-size:.5rem}
+/* ---- BACKGROUND ---- */
+.bg-wrap{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.bg-grad{
+  position:absolute;inset:0;
+  background:
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(61,111,255,0.18) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 40% at 85% 80%, rgba(232,184,75,0.07) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 60% at 15% 60%, rgba(61,111,255,0.06) 0%, transparent 55%);
+}
+.grid-lines{
+  position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(61,111,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(61,111,255,0.04) 1px, transparent 1px);
+  background-size:60px 60px;
+}
+.orb{
+  position:absolute;border-radius:50%;filter:blur(80px);animation:float 8s ease-in-out infinite;
+}
+.orb1{width:400px;height:400px;background:rgba(61,111,255,0.08);top:-100px;left:50%;transform:translateX(-50%)}
+.orb2{width:300px;height:300px;background:rgba(232,184,75,0.05);bottom:100px;right:10%;animation-delay:3s}
+.orb3{width:250px;height:250px;background:rgba(61,200,255,0.04);top:40%;left:5%;animation-delay:5s}
+@keyframes float{0%,100%{transform:translateY(0) translateX(-50%)}50%{transform:translateY(-30px) translateX(-50%)}}
 
-/* LAYOUT */
-.main{display:flex;flex:1;overflow:hidden}
+/* ---- HEADER ---- */
+header{
+  position:relative;z-index:10;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 32px;
+  border-bottom:1px solid rgba(61,111,255,0.15);
+  background:rgba(6,9,20,0.8);
+  backdrop-filter:blur(20px);
+  flex-shrink:0;
+}
+.logo-wrap{display:flex;align-items:center;gap:14px}
+.logo-icon{
+  width:40px;height:40px;border-radius:12px;
+  background:linear-gradient(135deg,#1a2a6c,#3d6fff);
+  border:1px solid rgba(61,111,255,0.4);
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.2rem;box-shadow:0 0 20px rgba(61,111,255,0.3);
+}
+.logo-text{font-size:1.3rem;font-weight:900;color:var(--text);letter-spacing:1px}
+.logo-text span{color:var(--gold)}
+.logo-sub{font-size:.65rem;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:1px}
+.header-badge{
+  display:flex;align-items:center;gap:6px;
+  background:rgba(61,224,160,0.08);
+  border:1px solid rgba(61,224,160,0.2);
+  border-radius:20px;padding:5px 14px;
+  font-size:.68rem;color:var(--green);font-weight:500;
+}
+.badge-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(61,224,160,0.4)}50%{opacity:.7;box-shadow:0 0 0 4px rgba(61,224,160,0)}}
 
-/* SIDEBAR */
-.sidebar{width:210px;flex-shrink:0;border-left:1px solid var(--border);background:var(--surface);padding:16px 12px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
-.sidebar-title{font-size:.6rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;padding-right:4px}
-.sug{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:.78rem;color:var(--text);cursor:pointer;transition:all .2s;line-height:1.5}
-.sug:hover{border-color:var(--gold);color:var(--gold);background:rgba(240,192,96,0.05);transform:translateX(-2px)}
-.sug-tag{display:block;font-size:.58rem;color:var(--muted);letter-spacing:1px;margin-bottom:2px;font-weight:500}
+/* ---- MAIN LAYOUT ---- */
+.main{position:relative;z-index:5;flex:1;display:flex;flex-direction:column;overflow:hidden}
 
-/* CHAT */
-.chat-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden}
-#messages{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+/* ---- WELCOME SCREEN ---- */
+#welcome{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:40px 20px;text-align:center;gap:32px;
+  animation:fadeIn .6s ease;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.welcome-icon{
+  width:90px;height:90px;border-radius:24px;
+  background:linear-gradient(135deg,#0d1a4a,#1a3a8f);
+  border:1px solid rgba(61,111,255,0.35);
+  display:flex;align-items:center;justify-content:center;
+  font-size:2.5rem;
+  box-shadow:0 0 60px rgba(61,111,255,0.25),inset 0 1px 0 rgba(255,255,255,0.05);
+  animation:iconPulse 3s ease-in-out infinite;
+}
+@keyframes iconPulse{0%,100%{box-shadow:0 0 60px rgba(61,111,255,0.25)}50%{box-shadow:0 0 80px rgba(61,111,255,0.4)}}
+.welcome-title{
+  font-size:clamp(2rem,5vw,3.2rem);font-weight:900;
+  background:linear-gradient(135deg,#dde2ff 0%,#e8b84b 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;line-height:1.1;
+}
+.welcome-sub{font-size:.95rem;color:var(--muted);line-height:1.8;max-width:520px}
+.welcome-sub b{color:var(--text);font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:600px}
+.chip{
+  background:rgba(255,255,255,0.04);border:1px solid var(--border);
+  border-radius:24px;padding:8px 16px;font-size:.78rem;color:var(--muted);
+  cursor:pointer;transition:all .2s;white-space:nowrap;
+}
+.chip:hover{border-color:var(--accent);color:var(--text);background:rgba(61,111,255,0.08)}
+.chip .ctag{color:var(--gold);font-weight:700;margin-left:4px;font-size:.65rem}
 
-/* MESSAGES */
-.msg{display:flex;flex-direction:column;gap:8px;animation:pop .25s ease}
-@keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+/* ---- CHAT SCREEN ---- */
+#chat-screen{
+  flex:1;display:none;flex-direction:column;overflow:hidden;
+}
+#chat-screen.active{display:flex}
+#messages{
+  flex:1;overflow-y:auto;padding:24px 20%;
+  display:flex;flex-direction:column;gap:20px;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+}
+@media(max-width:900px){#messages{padding:20px 5%}}
+
+/* ---- MESSAGES ---- */
+.msg{display:flex;flex-direction:column;gap:10px;animation:msgIn .3s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .msg.user{align-items:flex-start}
 .msg.bot{align-items:flex-end}
 
-.bubble{max-width:560px;padding:12px 16px;border-radius:16px;font-size:.87rem;line-height:1.65}
-.msg.user .bubble{background:var(--accent);color:#fff;border-bottom-left-radius:4px}
-.msg.bot .bubble{background:var(--card);border:1px solid var(--border);border-bottom-right-radius:4px}
+.bubble{
+  max-width:600px;padding:13px 18px;border-radius:18px;
+  font-size:.9rem;line-height:1.7;
+}
+.msg.user .bubble{
+  background:linear-gradient(135deg,#1a3080,#3d6fff);
+  color:#fff;border-bottom-left-radius:4px;
+  box-shadow:0 4px 20px rgba(61,111,255,0.3);
+}
+.msg.bot .bubble{
+  background:var(--card);border:1px solid var(--border);
+  border-bottom-right-radius:4px;
+  box-shadow:0 2px 12px rgba(0,0,0,0.3);
+}
 .bubble b{color:var(--gold)}
 
 /* CLAUDE BUBBLE */
-.claude-box{max-width:560px;padding:14px 16px;border-radius:16px;border-bottom-right-radius:4px;background:var(--claude);border:1px solid var(--claude-border);font-size:.84rem;line-height:1.75;color:#ccd0f0}
-.claude-tag{font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-weight:700;display:flex;align-items:center;gap:6px}
-.claude-tag::before{content:"✦";font-size:.8rem}
+.ai-box{
+  max-width:600px;padding:16px 18px;border-radius:18px;border-bottom-right-radius:4px;
+  background:var(--claude);
+  border:1px solid rgba(232,184,75,0.2);
+  font-size:.87rem;line-height:1.75;color:#b8c0e8;
+  box-shadow:0 4px 24px rgba(0,0,0,0.4);
+  position:relative;overflow:hidden;
+}
+.ai-box::before{
+  content:'';position:absolute;top:0;right:0;left:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(232,184,75,0.4),transparent);
+}
+.ai-tag{
+  font-size:.6rem;letter-spacing:2px;text-transform:uppercase;
+  color:var(--gold);margin-bottom:10px;font-weight:700;
+  display:flex;align-items:center;gap:6px;
+}
+.ai-tag::before{content:"✦";font-size:.75rem}
 
-/* CARDS */
-.cards{display:flex;flex-direction:column;gap:8px;width:100%;max-width:640px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 16px;display:flex;gap:12px;transition:all .2s;cursor:default}
-.card:hover{border-color:rgba(240,192,96,0.4);transform:translateX(-2px);box-shadow:0 4px 20px rgba(0,0,0,0.3)}
-.cnum{font-size:2rem;font-weight:900;color:var(--border);line-height:1;min-width:30px;text-align:center;transition:color .2s}
+/* RESULT CARDS */
+.cards{display:flex;flex-direction:column;gap:10px;width:100%;max-width:600px}
+.card{
+  background:rgba(17,19,32,0.8);
+  border:1px solid var(--border);border-radius:14px;
+  padding:14px 16px;display:flex;gap:14px;
+  transition:all .2s;backdrop-filter:blur(10px);
+}
+.card:hover{
+  border-color:rgba(61,111,255,0.4);
+  transform:translateX(4px);
+  box-shadow:0 4px 24px rgba(61,111,255,0.1);
+}
+.cnum{
+  font-size:1.8rem;font-weight:900;color:var(--border);
+  line-height:1;min-width:28px;text-align:center;transition:color .2s;
+}
 .card:hover .cnum{color:var(--gold)}
 .cbody{flex:1;min-width:0}
 .ctitle{font-size:.92rem;font-weight:700;margin-bottom:4px;color:var(--text)}
 .cmeta{font-size:.68rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:5px;align-items:center}
 .cgenres{font-size:.68rem;color:var(--gold);margin-bottom:6px;font-weight:500}
-.cdesc{font-size:.75rem;color:#7880b0;line-height:1.55}
+.cdesc{font-size:.75rem;color:#5a6090;line-height:1.55}
 .cscore{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap;text-align:center}
 .rdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:3px}
 
-/* CLUSTER CARDS */
-.clusters{display:flex;flex-wrap:wrap;gap:8px;max-width:640px}
-.clu{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;flex:1;min-width:150px}
+/* CLUSTERS */
+.clusters{display:flex;flex-wrap:wrap;gap:8px;max-width:600px}
+.clu{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:12px;padding:14px 16px;flex:1;min-width:150px;
+}
 .clu-name{font-size:.85rem;font-weight:700;color:var(--gold);margin-bottom:6px}
 .clu-stat{font-size:.7rem;color:var(--muted);line-height:1.8}
 
 /* TYPING */
-.typing{display:flex;gap:5px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-radius:16px;border-bottom-right-radius:4px;width:fit-content}
-.dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:bounce 1.2s infinite}
+.typing{
+  display:flex;gap:5px;padding:14px 18px;
+  background:var(--card);border:1px solid var(--border);
+  border-radius:18px;border-bottom-right-radius:4px;width:fit-content;
+}
+.dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:b 1.2s infinite}
 .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
-@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px);background:var(--gold)}}
+@keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px);background:var(--gold)}}
 
-/* INPUT */
-.input-bar{padding:14px 24px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:10px;flex-shrink:0}
-#inp{flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-family:'Heebo',sans-serif;font-size:.88rem;outline:none;transition:border-color .2s;direction:rtl}
+/* ---- INPUT BAR ---- */
+.input-wrap{
+  position:relative;z-index:10;
+  padding:20px 20%;
+  background:rgba(6,9,20,0.7);backdrop-filter:blur(20px);
+  border-top:1px solid rgba(61,111,255,0.1);
+  flex-shrink:0;
+}
+@media(max-width:900px){.input-wrap{padding:16px 5%}}
+.input-inner{
+  display:flex;align-items:center;gap:0;
+  background:rgba(17,19,32,0.9);
+  border:1px solid rgba(61,111,255,0.25);
+  border-radius:16px;padding:6px 6px 6px 16px;
+  transition:border-color .2s;
+  box-shadow:0 0 0 0 rgba(61,111,255,0);
+}
+.input-inner:focus-within{
+  border-color:rgba(61,111,255,0.6);
+  box-shadow:0 0 0 3px rgba(61,111,255,0.1);
+}
+#inp{
+  flex:1;background:transparent;border:none;outline:none;
+  color:var(--text);font-family:'Heebo',sans-serif;font-size:.92rem;
+  direction:rtl;padding:8px 4px;
+}
 #inp::placeholder{color:var(--muted)}
-#inp:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(240,192,96,0.08)}
-#btn{background:var(--gold);color:#000;border:none;border-radius:12px;padding:0 24px;font-family:'Heebo',sans-serif;font-size:.9rem;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap}
-#btn:hover{background:var(--gold2);transform:scale(1.02)}
-#btn:active{transform:scale(.98)}
+#btn{
+  background:linear-gradient(135deg,#2a50d0,#3d6fff);
+  color:#fff;border:none;border-radius:11px;
+  width:44px;height:44px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1.1rem;transition:all .2s;flex-shrink:0;
+  box-shadow:0 2px 12px rgba(61,111,255,0.4);
+}
+#btn:hover{background:linear-gradient(135deg,#3560e0,#5585ff);transform:scale(1.05)}
+#btn:active{transform:scale(.95)}
+.input-hint{text-align:center;margin-top:8px;font-size:.65rem;color:var(--muted)}
 </style>
 </head>
 <body>
-<header>
-  <div>
-    <div class="logo">סינמה<span>אייג'נט</span></div>
-    <div class="tagline">AI Movie Intelligence</div>
-  </div>
-  <div class="badge">פעיל</div>
-</header>
-<div class="main">
-  <div class="chat-wrap">
-    <div id="messages">
-      <div class="msg bot">
-        <div class="bubble">
-          &#x1F3AC; ברוכים הבאים ל<b>סינמה-אייג'נט</b>!<br><br>
-          אני משלב <b>למידת מכונה</b> עם <b>Claude AI</b> כדי לתת לך המלצות סרטים חכמות.<br><br>
-          &#x2022; <b>חיפוש</b> לפי מצב רוח או תיאור<br>
-          &#x2022; <b>סרטים דומים</b> ("סרטים דומים ל-Inception")<br>
-          &#x2022; <b>זיהוי חריגות</b> (פלופים, יהלומים נסתרים)<br>
-          &#x2022; <b>קלסטרים</b> &#x2014; איך הסרטים מקובצים<br><br>
-          על מה לך חשק היום?
-        </div>
-      </div>
-    </div>
-    <div class="input-bar">
-      <button id="btn">שלח</button>
-      <input id="inp" type="text" placeholder="תאר סרט, או שאל כל שאלה..." autocomplete="off" />
-    </div>
-  </div>
-  <aside class="sidebar">
-    <div class="sidebar-title">נסה לשאול</div>
-    <div class="sug" onclick="go('I want a funny romantic comedy')"><span class="sug-tag">חיפוש</span>קומדיה רומנטית מצחיקה</div>
-    <div class="sug" onclick="go('scary horror movie with ghosts')"><span class="sug-tag">חיפוש</span>סרט אימה עם רוחות</div>
-    <div class="sug" onclick="go('movies similar to Inception')"><span class="sug-tag">דומה</span>סרטים דומים ל-Inception</div>
-    <div class="sug" onclick="go('animated film for kids with magic')"><span class="sug-tag">חיפוש</span>סרט אנימציה לילדים</div>
-    <div class="sug" onclick="go('show me big budget box office flops')"><span class="sug-tag">חריגה</span>פלופים יקרים</div>
-    <div class="sug" onclick="go('movies similar to The Dark Knight')"><span class="sug-tag">דומה</span>דומה ל-The Dark Knight</div>
-    <div class="sug" onclick="go('what are the movie clusters')"><span class="sug-tag">קלסטרים</span>הצג קלסטרי סרטים</div>
-    <div class="sug" onclick="go('find me hidden gems with high rating')"><span class="sug-tag">חריגה</span>יהלומים נסתרים</div>
-    <div class="sug" onclick="go('space adventure with aliens')"><span class="sug-tag">חיפוש</span>הרפתקת חלל עם חייזרים</div>
-    <div class="sug" onclick="go('soldier fighting in world war')"><span class="sug-tag">חיפוש</span>סרט מלחמה</div>
-  </aside>
+<div class="bg-wrap">
+  <div class="bg-grad"></div>
+  <div class="grid-lines"></div>
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+  <div class="orb orb3"></div>
 </div>
+
+<header>
+  <div class="logo-wrap">
+    <div class="logo-icon">&#127916;</div>
+    <div>
+      <div class="logo-text">Cine<span>Agent</span></div>
+      <div class="logo-sub">AI Movie Intelligence</div>
+    </div>
+  </div>
+  <div class="header-badge"><div class="badge-dot"></div>פעיל</div>
+</header>
+
+<div class="main">
+  <!-- WELCOME SCREEN -->
+  <div id="welcome">
+    <div class="welcome-icon">&#127916;</div>
+    <div>
+      <div class="welcome-title">סינמה אייג&#x27;נט</div>
+    </div>
+    <div class="welcome-sub">
+      עוזר חכם למציאת סרטים המשלב <b>למידת מכונה</b>, <b>עיבוד שפה טבעית</b> ו<b>Claude AI</b>.<br>
+      מסד נתונים של <b>4,705 סרטים</b> &#x2014; חיפוש חופשי, המלצות, זיהוי חריגות וקלסטרים.
+    </div>
+    <div class="chips">
+      <div class="chip" onclick="go('אני רוצה קומדיה רומנטית מצחיקה')"><span class="ctag">חיפוש</span>קומדיה רומנטית</div>
+      <div class="chip" onclick="go('סרט אימה עם רוחות ומסתורין')"><span class="ctag">חיפוש</span>אימה ומסתורין</div>
+      <div class="chip" onclick="go('movies similar to Inception')"><span class="ctag">דומה</span>דומה ל-Inception</div>
+      <div class="chip" onclick="go('סרט אנימציה לילדים עם קסם')"><span class="ctag">חיפוש</span>אנימציה לילדים</div>
+      <div class="chip" onclick="go('show me big budget box office flops')"><span class="ctag">חריגה</span>פלופים יקרים</div>
+      <div class="chip" onclick="go('find me hidden gems with high rating')"><span class="ctag">חריגה</span>יהלומים נסתרים</div>
+      <div class="chip" onclick="go('movies similar to The Dark Knight')"><span class="ctag">דומה</span>דומה ל-Dark Knight</div>
+      <div class="chip" onclick="go('what are the movie clusters')"><span class="ctag">קלסטרים</span>הצג קלסטרים</div>
+    </div>
+  </div>
+
+  <!-- CHAT SCREEN -->
+  <div id="chat-screen">
+    <div id="messages"></div>
+  </div>
+
+  <!-- INPUT -->
+  <div class="input-wrap">
+    <div class="input-inner">
+      <input id="inp" type="text" placeholder="שאל על סרט, תאר מצב רוח, או בקש המלצה..." autocomplete="off" />
+      <button id="btn">&#x2191;</button>
+    </div>
+    <div class="input-hint">Enter &#x21B5; לשליחה</div>
+  </div>
+</div>
+
 <script>
-var M = document.getElementById('messages');
-var I = document.getElementById('inp');
-var B = document.getElementById('btn');
+var M   = document.getElementById('messages');
+var I   = document.getElementById('inp');
+var B   = document.getElementById('btn');
+var WEL = document.getElementById('welcome');
+var CS  = document.getElementById('chat-screen');
+var started = false;
 
-function rc(r){return r>=7.5?'#50e0a0':r>=6?'#f0c060':'#f06060';}
+function showChat(){
+  if(!started){
+    started=true;
+    WEL.style.display='none';
+    CS.classList.add('active');
+  }
+}
 
-function addMsg(role, html){
+function rc(r){return r>=7.5?'#3de0a0':r>=6?'#e8b84b':'#e85050';}
+
+function addMsg(role,html){
+  showChat();
   var d=document.createElement('div');
   d.className='msg '+role;
   d.innerHTML=html;
@@ -445,12 +635,12 @@ function addMsg(role, html){
 }
 
 function addTyping(){
+  showChat();
   var d=document.createElement('div');
   d.className='msg bot';d.id='typ';
   d.innerHTML='<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
   M.appendChild(d);M.scrollTop=M.scrollHeight;
 }
-
 function rmTyping(){var t=document.getElementById('typ');if(t)t.remove();}
 
 function buildCards(results){
@@ -479,7 +669,7 @@ function buildClusters(clusters){
     var c=clusters[i];
     h+='<div class="clu">';
     h+='<div class="clu-name">'+c.name+'</div>';
-    h+='<div class="clu-stat">&#127916; '+c.count+' סרטים<br>&#11088; ממוצע: '+c.avg_rating+'<br>'+c.top_genres+'</div>';
+    h+='<div class="clu-stat">'+c.count+' סרטים | ממוצע: '+c.avg_rating+'<br>'+c.top_genres+'</div>';
     h+='</div>';
   }
   h+='</div>';
@@ -504,7 +694,7 @@ function send(){
     addMsg('bot','<div class="bubble">'+data.reply+'</div>'+extra);
     if(data.claude_reply){
       setTimeout(function(){
-        addMsg('bot','<div class="claude-box"><div class="claude-tag">Claude AI</div>'+data.claude_reply+'</div>');
+        addMsg('bot','<div class="ai-box"><div class="ai-tag">Claude AI</div>'+data.claude_reply+'</div>');
         M.scrollTop=M.scrollHeight;
       },300);
     }
