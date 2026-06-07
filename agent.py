@@ -216,36 +216,25 @@ def index():
 def api_key_route():
     return jsonify({"key": os.environ.get("ANTHROPIC_API_KEY","")})
 
-@app.route("/test-claude")
-def test_claude():
-    key = os.environ.get("ANTHROPIC_API_KEY","")
+@app.route("/test-gemini")
+def test_gemini():
+    key = os.environ.get("GEMINI_API_KEY","")
     if not key:
-        return jsonify({"status": "error", "message": "No API key found in environment"})
+        return jsonify({"status": "error", "message": "No GEMINI_API_KEY found in environment"})
     try:
         import urllib.request
-        payload = {
-            "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 50,
-            "messages": [{"role": "user", "content": "Say hello in one sentence."}]
-        }
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=json.dumps(payload).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": key,
-                "anthropic-version": "2023-06-01"
-            },
-            method="POST"
-        )
+        payload = {"contents": [{"parts": [{"text": "אמור שלום במשפט אחד בעברית."}]}]}
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + key
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read())
-            return jsonify({"status": "success", "reply": data["content"][0]["text"]})
+            return jsonify({"status": "success", "reply": data["candidates"][0]["content"]["parts"][0]["text"]})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
-def call_claude(user_text, results, intent):
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+def call_gemini(user_text, results, intent):
+    api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key or not results:
         return None
     try:
@@ -253,28 +242,21 @@ def call_claude(user_text, results, intent):
         movies = ""
         for r in results[:5]:
             movies += "- " + r["title"] + " (" + str(r["year"]) + "): " + r["genres"] + ", " + str(r["rating"]) + "/10\n"
-        prompt = 'User asked: "' + user_text + '". Movies found:\n' + movies + 'ענה בעברית בלבד. כתוב 2-3 משפטים ידידותיים שממליצים על הסרטים, ציין 1-2 סרטים בשמם. אל תשתמש ב-markdown, כוכביות או כותרות. טקסט פשוט בלבד.'
+        prompt = "ענה בעברית בלבד. המשתמש שאל: " + user_text + ". סרטים שנמצאו:\n" + movies + "כתוב 2-3 משפטים ידידותיים שממליצים על הסרטים, ציין 1-2 סרטים בשמם. טקסט פשוט בלבד."
         payload = {
-            "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 200,
-            "messages": [{"role": "user", "content": prompt}]
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": 200, "temperature": 0.7}
         }
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + api_key
+        req = urllib.request.Request(url,
             data=json.dumps(payload).encode(),
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01"
-            },
-            method="POST"
-        )
+            headers={"Content-Type": "application/json"},
+            method="POST")
         with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read())
-            return data["content"][0]["text"]
+            return data["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        print("Claude error type:", type(e).__name__)
-        print("Claude error:", str(e))
+        print("Gemini error:", str(e))
         import traceback
         traceback.print_exc()
         return None
@@ -291,7 +273,7 @@ def chat():
     elif intent == "cluster_info": result = handle_cluster_info(user_text)
     else:                          result = handle_search(user_text)
     if intent != "cluster_info":
-        claude_reply = call_claude(user_text, result.get("results", []), intent)
+        claude_reply = call_gemini(user_text, result.get("results", []), intent)
         if claude_reply:
             result["claude_reply"] = claude_reply
     return jsonify(result)
@@ -694,7 +676,7 @@ function send(){
     addMsg('bot','<div class="bubble">'+data.reply+'</div>'+extra);
     if(data.claude_reply){
       setTimeout(function(){
-        addMsg('bot','<div class="ai-box"><div class="ai-tag">Claude AI</div>'+data.claude_reply+'</div>');
+        addMsg('bot','<div class="ai-box"><div class="ai-tag">Gemini AI</div>'+data.claude_reply+'</div>');
         M.scrollTop=M.scrollHeight;
       },300);
     }
