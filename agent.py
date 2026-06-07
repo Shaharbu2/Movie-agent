@@ -253,7 +253,7 @@ def call_claude(user_text, results, intent):
         movies = ""
         for r in results[:5]:
             movies += "- " + r["title"] + " (" + str(r["year"]) + "): " + r["genres"] + ", " + str(r["rating"]) + "/10\n"
-        prompt = 'User asked: "' + user_text + '". Movies found:\n' + movies + 'Write 2-3 friendly sentences recommending these, mention 1-2 by name.'
+        prompt = 'User asked: "' + user_text + '". Movies found:\n' + movies + 'Write 2-3 friendly sentences recommending these, mention 1-2 by name. Do NOT use markdown, asterisks, or headers. Plain text only.'
         payload = {
             "model": "claude-haiku-4-5-20251001",
             "max_tokens": 200,
@@ -297,199 +297,227 @@ def chat():
     return jsonify(result)
 
 HTML_PAGE = """<!DOCTYPE html>
-<html lang="en">
+<html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CineAgent</title>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<title>סינמה-אייג'נט</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0a0a0f;--surface:#13131a;--card:#1c1c26;--border:#2a2a38;--gold:#e8c96d;--gold2:#f5dfa0;--text:#e8e8f0;--muted:#7070a0;--accent:#5b8cff;--green:#6deba7}
+:root{
+  --bg:#07080f;--surface:#0e0f1a;--card:#151622;--border:#22243a;
+  --gold:#f0c060;--gold2:#f8d98a;--text:#e8eaf6;--muted:#6068a0;
+  --accent:#4f7ef8;--green:#50e0a0;--red:#f06060;
+  --claude:#1a1535;--claude-border:rgba(240,192,96,0.3)
+}
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-weight:300;height:100vh;display:flex;flex-direction:column;overflow:hidden}
-header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
-.logo{font-family:'Bebas Neue',sans-serif;font-size:2rem;letter-spacing:3px;color:var(--gold);line-height:1}
-.logo span{color:var(--text)}
-.tagline{font-size:.75rem;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
-.pill{margin-left:auto;background:#1e2a1e;color:var(--green);font-size:.7rem;letter-spacing:1px;text-transform:uppercase;padding:4px 12px;border-radius:20px;border:1px solid #2a4a2a}
+body{background:var(--bg);color:var(--text);font-family:'Heebo',sans-serif;font-weight:300;height:100vh;display:flex;flex-direction:column;overflow:hidden;direction:rtl}
+
+/* HEADER */
+header{display:flex;align-items:center;gap:16px;padding:14px 24px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;box-shadow:0 2px 20px rgba(0,0,0,0.4)}
+.logo{font-size:1.6rem;font-weight:900;color:var(--gold);letter-spacing:-0.5px;line-height:1}
+.logo span{color:var(--text);font-weight:300}
+.tagline{font-size:.7rem;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:2px}
+.badge{margin-right:auto;background:rgba(80,224,160,0.1);color:var(--green);font-size:.65rem;padding:4px 12px;border-radius:20px;border:1px solid rgba(80,224,160,0.25);font-weight:500}
+.badge::before{content:"● ";font-size:.5rem}
+
+/* LAYOUT */
 .main{display:flex;flex:1;overflow:hidden}
-.sidebar{width:220px;flex-shrink:0;border-right:1px solid var(--border);background:var(--surface);padding:20px 16px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
-.sidebar-title{font-size:.65rem;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
-.suggestion{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:.78rem;color:var(--text);cursor:pointer;transition:all .2s;line-height:1.4}
-.suggestion:hover{border-color:var(--gold);color:var(--gold)}
-.s-tag{display:block;font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+
+/* SIDEBAR */
+.sidebar{width:210px;flex-shrink:0;border-left:1px solid var(--border);background:var(--surface);padding:16px 12px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.sidebar-title{font-size:.6rem;letter-spacing:3px;text-transform:uppercase;color:var(--muted);margin-bottom:4px;padding-right:4px}
+.sug{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:.78rem;color:var(--text);cursor:pointer;transition:all .2s;line-height:1.5}
+.sug:hover{border-color:var(--gold);color:var(--gold);background:rgba(240,192,96,0.05);transform:translateX(-2px)}
+.sug-tag{display:block;font-size:.58rem;color:var(--muted);letter-spacing:1px;margin-bottom:2px;font-weight:500}
+
+/* CHAT */
 .chat-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden}
-#messages{flex:1;overflow-y:auto;padding:24px 28px;display:flex;flex-direction:column;gap:20px;scrollbar-width:thin}
-.msg{display:flex;flex-direction:column;gap:6px}
-.msg.user{align-items:flex-end}
-.msg.bot{align-items:flex-start}
-.bubble{max-width:520px;padding:12px 16px;border-radius:14px;font-size:.88rem;line-height:1.6}
-.msg.user .bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
-.msg.bot .bubble{background:var(--card);border:1px solid var(--border);border-bottom-left-radius:4px}
+#messages{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+
+/* MESSAGES */
+.msg{display:flex;flex-direction:column;gap:8px;animation:pop .25s ease}
+@keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{align-items:flex-start}
+.msg.bot{align-items:flex-end}
+
+.bubble{max-width:560px;padding:12px 16px;border-radius:16px;font-size:.87rem;line-height:1.65}
+.msg.user .bubble{background:var(--accent);color:#fff;border-bottom-left-radius:4px}
+.msg.bot .bubble{background:var(--card);border:1px solid var(--border);border-bottom-right-radius:4px}
 .bubble b{color:var(--gold)}
-.claude-bubble{max-width:520px;padding:12px 16px;border-radius:14px;font-size:.85rem;line-height:1.7;background:linear-gradient(135deg,#1a1630,#141020);border:1px solid rgba(232,201,109,.25);border-bottom-left-radius:4px;color:#c8c8e8;margin-top:4px}
-.claude-label{font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-bottom:6px}
-.cards{display:flex;flex-direction:column;gap:10px;width:100%;max-width:680px;margin-top:6px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;gap:14px;transition:border-color .2s}
-.card:hover{border-color:var(--gold)}
-.card-rank{font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:var(--border);line-height:1;min-width:32px;text-align:center}
-.card:hover .card-rank{color:var(--gold)}
-.card-body{flex:1}
-.card-title{font-size:.95rem;font-weight:500;margin-bottom:3px}
-.card-meta{font-size:.72rem;color:var(--muted);margin-bottom:6px;display:flex;gap:10px;flex-wrap:wrap}
-.card-genres{font-size:.72rem;color:var(--gold);margin-bottom:6px}
-.card-overview{font-size:.78rem;color:#9090b8;line-height:1.5}
-.card-score{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
-.rdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
-.cluster-grid{display:flex;flex-wrap:wrap;gap:10px;max-width:680px;margin-top:6px}
-.cluster-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;flex:1;min-width:160px}
-.cluster-name{font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;color:var(--gold);margin-bottom:4px}
-.cluster-stat{font-size:.72rem;color:var(--muted);line-height:1.7}
-.typing{display:flex;gap:5px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;width:fit-content}
-.dot{width:7px;height:7px;background:var(--muted);border-radius:50%;animation:bounce 1.2s infinite}
+
+/* CLAUDE BUBBLE */
+.claude-box{max-width:560px;padding:14px 16px;border-radius:16px;border-bottom-right-radius:4px;background:var(--claude);border:1px solid var(--claude-border);font-size:.84rem;line-height:1.75;color:#ccd0f0}
+.claude-tag{font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-weight:700;display:flex;align-items:center;gap:6px}
+.claude-tag::before{content:"✦";font-size:.8rem}
+
+/* CARDS */
+.cards{display:flex;flex-direction:column;gap:8px;width:100%;max-width:640px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 16px;display:flex;gap:12px;transition:all .2s;cursor:default}
+.card:hover{border-color:rgba(240,192,96,0.4);transform:translateX(-2px);box-shadow:0 4px 20px rgba(0,0,0,0.3)}
+.cnum{font-size:2rem;font-weight:900;color:var(--border);line-height:1;min-width:30px;text-align:center;transition:color .2s}
+.card:hover .cnum{color:var(--gold)}
+.cbody{flex:1;min-width:0}
+.ctitle{font-size:.92rem;font-weight:700;margin-bottom:4px;color:var(--text)}
+.cmeta{font-size:.68rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:5px;align-items:center}
+.cgenres{font-size:.68rem;color:var(--gold);margin-bottom:6px;font-weight:500}
+.cdesc{font-size:.75rem;color:#7880b0;line-height:1.55}
+.cscore{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap;text-align:center}
+.rdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:3px}
+
+/* CLUSTER CARDS */
+.clusters{display:flex;flex-wrap:wrap;gap:8px;max-width:640px}
+.clu{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;flex:1;min-width:150px}
+.clu-name{font-size:.85rem;font-weight:700;color:var(--gold);margin-bottom:6px}
+.clu-stat{font-size:.7rem;color:var(--muted);line-height:1.8}
+
+/* TYPING */
+.typing{display:flex;gap:5px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-radius:16px;border-bottom-right-radius:4px;width:fit-content}
+.dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:bounce 1.2s infinite}
 .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
 @keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px);background:var(--gold)}}
-.input-bar{padding:16px 28px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:10px;flex-shrink:0}
-#inp{flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:.88rem;outline:none;transition:border-color .2s}
+
+/* INPUT */
+.input-bar{padding:14px 24px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:10px;flex-shrink:0}
+#inp{flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-family:'Heebo',sans-serif;font-size:.88rem;outline:none;transition:border-color .2s;direction:rtl}
 #inp::placeholder{color:var(--muted)}
-#inp:focus{border-color:var(--gold)}
-#btn{background:var(--gold);color:#000;border:none;border-radius:12px;padding:0 22px;font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:2px;cursor:pointer}
-#btn:hover{background:var(--gold2)}
+#inp:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(240,192,96,0.08)}
+#btn{background:var(--gold);color:#000;border:none;border-radius:12px;padding:0 24px;font-family:'Heebo',sans-serif;font-size:.9rem;font-weight:700;cursor:pointer;transition:all .2s;white-space:nowrap}
+#btn:hover{background:var(--gold2);transform:scale(1.02)}
+#btn:active{transform:scale(.98)}
 </style>
 </head>
 <body>
 <header>
   <div>
-    <div class="logo">Cine<span>Agent</span></div>
-    <div class="tagline">AI-Powered Movie Intelligence</div>
+    <div class="logo">סינמה<span>אייג'נט</span></div>
+    <div class="tagline">AI Movie Intelligence</div>
   </div>
-  <div class="pill">&#9679; Live</div>
+  <div class="badge">פעיל</div>
 </header>
 <div class="main">
-  <aside class="sidebar">
-    <div class="sidebar-title">Try asking</div>
-    <div class="suggestion" onclick="go('I want a funny romantic comedy')"><span class="s-tag">Search</span>Funny romantic comedy</div>
-    <div class="suggestion" onclick="go('scary ghost movie with mystery')"><span class="s-tag">Search</span>Scary ghost mystery</div>
-    <div class="suggestion" onclick="go('movies similar to Inception')"><span class="s-tag">Similar</span>Movies similar to Inception</div>
-    <div class="suggestion" onclick="go('animated film for kids with magic')"><span class="s-tag">Search</span>Animated kids fantasy</div>
-    <div class="suggestion" onclick="go('show me big budget box office flops')"><span class="s-tag">Anomaly</span>Big budget flops</div>
-    <div class="suggestion" onclick="go('movies similar to The Dark Knight')"><span class="s-tag">Similar</span>Movies like The Dark Knight</div>
-    <div class="suggestion" onclick="go('what are the movie clusters')"><span class="s-tag">Clusters</span>Movie clusters</div>
-    <div class="suggestion" onclick="go('find me hidden gems with high rating')"><span class="s-tag">Anomaly</span>Hidden gems</div>
-  </aside>
   <div class="chat-wrap">
     <div id="messages">
       <div class="msg bot">
         <div class="bubble">
-          Welcome to <b>CineAgent</b> &#8212; your AI movie assistant.<br><br>
-          I combine <b>Machine Learning</b> with <b>Claude AI</b> for smart recommendations.<br><br>
-          &#8226; <b>Search</b> by mood or description<br>
-          &#8226; <b>Find similar</b> movies<br>
-          &#8226; <b>Detect anomalies</b> (flops, hidden gems)<br>
-          &#8226; <b>Explore clusters</b><br><br>
-          What are you in the mood for?
+          &#x1F3AC; ברוכים הבאים ל<b>סינמה-אייג'נט</b>!<br><br>
+          אני משלב <b>למידת מכונה</b> עם <b>Claude AI</b> כדי לתת לך המלצות סרטים חכמות.<br><br>
+          &#x2022; <b>חיפוש</b> לפי מצב רוח או תיאור<br>
+          &#x2022; <b>סרטים דומים</b> ("סרטים דומים ל-Inception")<br>
+          &#x2022; <b>זיהוי חריגות</b> (פלופים, יהלומים נסתרים)<br>
+          &#x2022; <b>קלסטרים</b> &#x2014; איך הסרטים מקובצים<br><br>
+          על מה לך חשק היום?
         </div>
       </div>
     </div>
     <div class="input-bar">
-      <input id="inp" type="text" placeholder="Describe a movie, or ask anything..." autocomplete="off" />
-      <button id="btn">SEND</button>
+      <button id="btn">שלח</button>
+      <input id="inp" type="text" placeholder="תאר סרט, או שאל כל שאלה..." autocomplete="off" />
     </div>
   </div>
+  <aside class="sidebar">
+    <div class="sidebar-title">נסה לשאול</div>
+    <div class="sug" onclick="go('I want a funny romantic comedy')"><span class="sug-tag">חיפוש</span>קומדיה רומנטית מצחיקה</div>
+    <div class="sug" onclick="go('scary horror movie with ghosts')"><span class="sug-tag">חיפוש</span>סרט אימה עם רוחות</div>
+    <div class="sug" onclick="go('movies similar to Inception')"><span class="sug-tag">דומה</span>סרטים דומים ל-Inception</div>
+    <div class="sug" onclick="go('animated film for kids with magic')"><span class="sug-tag">חיפוש</span>סרט אנימציה לילדים</div>
+    <div class="sug" onclick="go('show me big budget box office flops')"><span class="sug-tag">חריגה</span>פלופים יקרים</div>
+    <div class="sug" onclick="go('movies similar to The Dark Knight')"><span class="sug-tag">דומה</span>דומה ל-The Dark Knight</div>
+    <div class="sug" onclick="go('what are the movie clusters')"><span class="sug-tag">קלסטרים</span>הצג קלסטרי סרטים</div>
+    <div class="sug" onclick="go('find me hidden gems with high rating')"><span class="sug-tag">חריגה</span>יהלומים נסתרים</div>
+    <div class="sug" onclick="go('space adventure with aliens')"><span class="sug-tag">חיפוש</span>הרפתקת חלל עם חייזרים</div>
+    <div class="sug" onclick="go('soldier fighting in world war')"><span class="sug-tag">חיפוש</span>סרט מלחמה</div>
+  </aside>
 </div>
 <script>
 var M = document.getElementById('messages');
 var I = document.getElementById('inp');
 var B = document.getElementById('btn');
 
-function rc(r) { return r>=7.5?'#6deba7':r>=6?'#e8c96d':'#ff6b6b'; }
+function rc(r){return r>=7.5?'#50e0a0':r>=6?'#f0c060':'#f06060';}
 
-function addMsg(role, html) {
-  var d = document.createElement('div');
-  d.className = 'msg ' + role;
-  d.innerHTML = html;
+function addMsg(role, html){
+  var d=document.createElement('div');
+  d.className='msg '+role;
+  d.innerHTML=html;
   M.appendChild(d);
-  M.scrollTop = M.scrollHeight;
+  M.scrollTop=M.scrollHeight;
 }
 
-function addTyping() {
-  var d = document.createElement('div');
-  d.className = 'msg bot';
-  d.id = 'typ';
-  d.innerHTML = '<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
-  M.appendChild(d);
-  M.scrollTop = M.scrollHeight;
+function addTyping(){
+  var d=document.createElement('div');
+  d.className='msg bot';d.id='typ';
+  d.innerHTML='<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  M.appendChild(d);M.scrollTop=M.scrollHeight;
 }
 
-function rmTyping() { var t=document.getElementById('typ'); if(t) t.remove(); }
+function rmTyping(){var t=document.getElementById('typ');if(t)t.remove();}
 
-function buildCards(results) {
-  if (!results || !results.length) return '';
-  var h = '<div class="cards">';
-  for (var i=0; i<results.length; i++) {
-    var r = results[i];
-    h += '<div class="card">';
-    h += '<div class="card-rank">' + r.rank + '</div>';
-    h += '<div class="card-body">';
-    h += '<div class="card-title">' + r.title + '</div>';
-    h += '<div class="card-meta"><span>' + r.year + '</span><span>' + r.director + '</span>';
-    h += '<span><span class="rdot" style="background:' + rc(r.rating) + '"></span>' + r.rating + '/10</span></div>';
-    h += '<div class="card-genres">' + r.genres + '</div>';
-    h += '<div class="card-overview">' + r.overview + '</div>';
-    h += '</div><div class="card-score">score<br>' + r.score + '</div></div>';
+function buildCards(results){
+  if(!results||!results.length)return '';
+  var h='<div class="cards">';
+  for(var i=0;i<results.length;i++){
+    var r=results[i];
+    h+='<div class="card">';
+    h+='<div class="cnum">'+r.rank+'</div>';
+    h+='<div class="cbody">';
+    h+='<div class="ctitle">'+r.title+'</div>';
+    h+='<div class="cmeta"><span>'+r.year+'</span><span>'+r.director+'</span>';
+    h+='<span><span class="rdot" style="background:'+rc(r.rating)+'"></span>'+r.rating+'/10</span></div>';
+    h+='<div class="cgenres">'+r.genres+'</div>';
+    h+='<div class="cdesc">'+r.overview+'</div>';
+    h+='</div><div class="cscore">ציון<br>'+r.score+'</div></div>';
   }
-  h += '</div>';
+  h+='</div>';
   return h;
 }
 
-function buildClusters(clusters) {
-  if (!clusters) return '';
-  var h = '<div class="cluster-grid">';
-  for (var i=0; i<clusters.length; i++) {
-    var c = clusters[i];
-    h += '<div class="cluster-card">';
-    h += '<div class="cluster-name">' + c.name + '</div>';
-    h += '<div class="cluster-stat">' + c.count + ' movies | Avg: ' + c.avg_rating + '<br>' + c.top_genres + '</div>';
-    h += '</div>';
+function buildClusters(clusters){
+  if(!clusters)return '';
+  var h='<div class="clusters">';
+  for(var i=0;i<clusters.length;i++){
+    var c=clusters[i];
+    h+='<div class="clu">';
+    h+='<div class="clu-name">'+c.name+'</div>';
+    h+='<div class="clu-stat">&#127916; '+c.count+' סרטים<br>&#11088; ממוצע: '+c.avg_rating+'<br>'+c.top_genres+'</div>';
+    h+='</div>';
   }
-  h += '</div>';
+  h+='</div>';
   return h;
 }
 
-
-function send() {
-  var text = I.value.trim();
-  if (!text) return;
-  addMsg('user', '<div class="bubble">' + text + '</div>');
-  I.value = '';
+function send(){
+  var text=I.value.trim();
+  if(!text)return;
+  addMsg('user','<div class="bubble">'+text+'</div>');
+  I.value='';
   addTyping();
-  fetch('/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: text })
+  fetch('/chat',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({message:text})
   })
-  .then(function(r){ return r.json(); })
+  .then(function(r){return r.json();})
   .then(function(data){
     rmTyping();
-    var extra = data.intent === 'cluster_info' ? buildClusters(data.clusters) : buildCards(data.results);
-    addMsg('bot', '<div class="bubble">' + data.reply + '</div>' + extra);
-    if (data.claude_reply) {
+    var extra=data.intent==='cluster_info'?buildClusters(data.clusters):buildCards(data.results);
+    addMsg('bot','<div class="bubble">'+data.reply+'</div>'+extra);
+    if(data.claude_reply){
       setTimeout(function(){
-        addMsg('bot', '<div class="claude-bubble"><div class="claude-label">&#10022; Claude AI</div>' + data.claude_reply + '</div>');
-        M.scrollTop = M.scrollHeight;
-      }, 300);
+        addMsg('bot','<div class="claude-box"><div class="claude-tag">Claude AI</div>'+data.claude_reply+'</div>');
+        M.scrollTop=M.scrollHeight;
+      },300);
     }
   })
   .catch(function(e){
     rmTyping();
-    addMsg('bot', '<div class="bubble">Something went wrong. Please try again.</div>');
+    addMsg('bot','<div class="bubble">משהו השתבש. נסה שוב.</div>');
   });
 }
 
-function go(q) { I.value = q; send(); }
-
-B.onclick = function() { send(); };
-I.onkeydown = function(e) { if (e.key === 'Enter') send(); };
+function go(q){I.value=q;send();}
+B.onclick=function(){send();};
+I.onkeydown=function(e){if(e.key==='Enter')send();};
 </script>
 </body>
 </html>"""
