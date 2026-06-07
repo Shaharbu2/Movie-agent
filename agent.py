@@ -4,7 +4,7 @@ import json
 import numpy as np
 import pandas as pd
 from collections import Counter
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, Response
 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.cluster import KMeans
@@ -210,7 +210,7 @@ def handle_cluster_info(user_text):
 
 @app.route("/")
 def index():
-    return render_template_string(HTML_PAGE)
+    return Response(HTML_PAGE, mimetype="text/html")
 
 @app.route("/api-key")
 def api_key_route():
