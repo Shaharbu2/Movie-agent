@@ -216,26 +216,57 @@ def index():
 def api_key_route():
     return jsonify({"key": os.environ.get("ANTHROPIC_API_KEY","")})
 
-@app.route("/test-gemini")
-def test_gemini():
-    key = os.environ.get("GEMINI_API_KEY","")
+@app.route("/test-openai")
+def test_openai():
+    key = os.environ.get("OPENAI_API_KEY","")
     if not key:
-        return jsonify({"status": "error", "message": "No GEMINI_API_KEY found in environment"})
+        return jsonify({"status": "error", "message": "No OPENAI_API_KEY found in environment"})
     try:
         import urllib.request
-        payload = {"contents": [{"parts": [{"text": "אמור שלום במשפט אחד בעברית."}]}]}
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + key
-        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}, method="POST")
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "אמור שלום במשפט אחד בעברית."}],
+            "max_tokens": 50
+        }
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + key},
+            method="POST"
+        )
         with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read())
-            return jsonify({"status": "success", "reply": data["candidates"][0]["content"]["parts"][0]["text"]})
+            return jsonify({"status": "success", "reply": data["choices"][0]["message"]["content"]})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
-def call_gemini(user_text, results, intent):
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+def call_openai(user_text, results, intent):
+    api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key or not results:
+        return None
+    try:
+        import urllib.request
+        movies = ""
+        for r in results[:5]:
+            movies += "- " + r["title"] + " (" + str(r["year"]) + "): " + r["genres"] + ", " + str(r["rating"]) + "/10\n"
+        prompt = "ענה בעברית בלבד. המשתמש שאל: " + user_text + ". סרטים שנמצאו:\n" + movies + "כתוב 2-3 משפטים ידידותיים שממליצים על הסרטים, ציין 1-2 סרטים בשמם. טקסט פשוט בלבד ללא markdown."
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 200,
+            "temperature": 0.7
+        }
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + api_key},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read())
+            return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        print("OpenAI error:", str(e))
         return None
     try:
         import urllib.request
@@ -273,7 +304,7 @@ def chat():
     elif intent == "cluster_info": result = handle_cluster_info(user_text)
     else:                          result = handle_search(user_text)
     if intent != "cluster_info":
-        claude_reply = call_gemini(user_text, result.get("results", []), intent)
+        claude_reply = call_openai(user_text, result.get("results", []), intent)
         if claude_reply:
             result["claude_reply"] = claude_reply
     return jsonify(result)
@@ -676,7 +707,7 @@ function send(){
     addMsg('bot','<div class="bubble">'+data.reply+'</div>'+extra);
     if(data.claude_reply){
       setTimeout(function(){
-        addMsg('bot','<div class="ai-box"><div class="ai-tag">Gemini AI</div>'+data.claude_reply+'</div>');
+        addMsg('bot','<div class="ai-box"><div class="ai-tag">ChatGPT AI</div>'+data.claude_reply+'</div>');
         M.scrollTop=M.scrollHeight;
       },300);
     }
