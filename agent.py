@@ -375,572 +375,269 @@ def chat():
     else:
         result = handle_search(user_text)
 
+    # Generate Claude API natural language response
+    matched_genres = result.get("genres", [])
+    claude_reply = generate_claude_response(
+        user_text, intent, result.get("results", []), matched_genres
+    )
+    if claude_reply:
+        result["claude_reply"] = claude_reply
+
     return jsonify(result)
 
 # ==============================================================
-# 10. HTML FRONTEND
+# 10. CLAUDE API — natural language response generator
 # ==============================================================
 
-HTML_PAGE = """
-<!DOCTYPE html>
+import urllib.request
+
+def generate_claude_response(user_text, intent, results, matched_genres=None):
+    """
+    Takes our search results and asks Claude API to write
+    a natural, conversational recommendation response.
+    """
+    try:
+        if intent == "cluster_info":
+            return None  # clusters have their own UI, no need for Claude
+
+        if not results:
+            return None
+
+        # Build a summary of results for Claude
+        movies_summary = ""
+        for r in results[:5]:
+            movies_summary += f"- {r['title']} ({r['year']}) | {r['genres']} | Rating: {r['rating']}/10 | Director: {r['director']} | Overview: {r['overview'][:100]}\n"
+
+        genre_hint = f"Detected genres: {', '.join(matched_genres)}" if matched_genres else ""
+
+        if intent == "similar":
+            prompt = f"""The user asked: "{user_text}"
+We found these similar movies:
+{movies_summary}
+Write a short, enthusiastic 2-3 sentence response recommending these movies. 
+Mention 1-2 specific titles by name and say WHY they match. Be conversational and friendly. No bullet points."""
+
+        elif intent == "anomaly":
+            prompt = f"""The user asked: "{user_text}"
+We found these unusual/anomaly movies from our dataset:
+{movies_summary}
+Write a short, interesting 2-3 sentence response about these movies and what makes them unusual or special.
+Mention 1-2 specific titles. Be conversational. No bullet points."""
+
+        else:  # search
+            prompt = f"""The user asked: "{user_text}"
+{genre_hint}
+We found these matching movies:
+{movies_summary}
+Write a short, enthusiastic 2-3 sentence response recommending these movies.
+Mention 1-2 specific titles by name and say why they match the request. Be conversational and friendly. No bullet points."""
+
+        payload = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read())
+            return data["content"][0]["text"]
+
+    except Exception as e:
+        print(f"Claude API error: {e}")
+        return None
+
+
+# ==============================================================
+# 11. HTML FRONTEND
+# ==============================================================
+
+HTML_PAGE = open(__file__.replace('agent.py','') + 'templates/index.html').read() if False else """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CineAgent — AI Movie Assistant</title>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&family=Playfair+Display:ital@0;1&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg:       #0a0a0f;
-    --surface:  #13131a;
-    --card:     #1c1c26;
-    --border:   #2a2a38;
-    --gold:     #e8c96d;
-    --gold2:    #f5dfa0;
-    --text:     #e8e8f0;
-    --muted:    #7070a0;
-    --accent:   #5b8cff;
-    --red:      #ff6b6b;
-    --green:    #6deba7;
-  }
-
-  * { margin:0; padding:0; box-sizing:border-box; }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'DM Sans', sans-serif;
-    font-weight: 300;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  /* ---- HEADER ---- */
-  header {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 18px 28px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    flex-shrink: 0;
-  }
-
-  .logo {
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 2rem;
-    letter-spacing: 3px;
-    color: var(--gold);
-    line-height: 1;
-  }
-
-  .logo span { color: var(--text); }
-
-  .tagline {
-    font-size: 0.75rem;
-    color: var(--muted);
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
-
-  .pill {
-    margin-left: auto;
-    background: #1e2a1e;
-    color: var(--green);
-    font-size: 0.7rem;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    padding: 4px 12px;
-    border-radius: 20px;
-    border: 1px solid #2a4a2a;
-  }
-
-  /* ---- MAIN LAYOUT ---- */
-  .main {
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-  }
-
-  /* ---- SIDEBAR ---- */
-  .sidebar {
-    width: 220px;
-    flex-shrink: 0;
-    border-right: 1px solid var(--border);
-    background: var(--surface);
-    padding: 20px 16px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .sidebar-title {
-    font-size: 0.65rem;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-bottom: 8px;
-    padding-left: 4px;
-  }
-
-  .suggestion {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 12px;
-    font-size: 0.78rem;
-    color: var(--text);
-    cursor: pointer;
-    transition: all 0.2s;
-    line-height: 1.4;
-  }
-
-  .suggestion:hover {
-    border-color: var(--gold);
-    color: var(--gold);
-    background: #1e1c14;
-  }
-
-  .suggestion .s-tag {
-    display: block;
-    font-size: 0.6rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 3px;
-  }
-
-  /* ---- CHAT AREA ---- */
-  .chat-wrap {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  #messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 24px 28px;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
-  }
-
-  /* ---- MESSAGES ---- */
-  .msg {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    animation: fadeUp 0.3s ease;
-  }
-
-  @keyframes fadeUp {
-    from { opacity:0; transform: translateY(10px); }
-    to   { opacity:1; transform: translateY(0); }
-  }
-
-  .msg.user { align-items: flex-end; }
-  .msg.bot  { align-items: flex-start; }
-
-  .bubble {
-    max-width: 520px;
-    padding: 12px 16px;
-    border-radius: 14px;
-    font-size: 0.88rem;
-    line-height: 1.6;
-  }
-
-  .msg.user .bubble {
-    background: var(--accent);
-    color: #fff;
-    border-bottom-right-radius: 4px;
-  }
-
-  .msg.bot .bubble {
-    background: var(--card);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-bottom-left-radius: 4px;
-  }
-
-  .bubble b { color: var(--gold); }
-
-  /* ---- RESULT CARDS ---- */
-  .cards {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    width: 100%;
-    max-width: 680px;
-  }
-
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 16px;
-    display: flex;
-    gap: 14px;
-    align-items: flex-start;
-    transition: border-color 0.2s;
-    animation: fadeUp 0.3s ease both;
-  }
-
-  .card:hover { border-color: var(--gold); }
-
-  .card-rank {
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 1.8rem;
-    color: var(--border);
-    line-height: 1;
-    min-width: 32px;
-    text-align: center;
-  }
-
-  .card:hover .card-rank { color: var(--gold); }
-
-  .card-body { flex: 1; }
-
-  .card-title {
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: var(--text);
-    margin-bottom: 3px;
-  }
-
-  .card-meta {
-    font-size: 0.72rem;
-    color: var(--muted);
-    margin-bottom: 6px;
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .card-genres {
-    font-size: 0.72rem;
-    color: var(--gold);
-    margin-bottom: 6px;
-  }
-
-  .card-overview {
-    font-size: 0.78rem;
-    color: #9090b8;
-    line-height: 1.5;
-  }
-
-  .card-score {
-    font-size: 0.65rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    white-space: nowrap;
-  }
-
-  .rating-dot {
-    display: inline-block;
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    margin-right: 4px;
-  }
-
-  /* ---- CLUSTER CARDS ---- */
-  .cluster-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    max-width: 680px;
-  }
-
-  .cluster-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 16px;
-    flex: 1;
-    min-width: 160px;
-    animation: fadeUp 0.3s ease both;
-  }
-
-  .cluster-name {
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 1rem;
-    letter-spacing: 1px;
-    color: var(--gold);
-    margin-bottom: 4px;
-  }
-
-  .cluster-stat {
-    font-size: 0.72rem;
-    color: var(--muted);
-    line-height: 1.7;
-  }
-
-  /* ---- TYPING INDICATOR ---- */
-  .typing {
-    display: flex;
-    gap: 5px;
-    padding: 14px 16px;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    border-bottom-left-radius: 4px;
-    width: fit-content;
-  }
-
-  .dot {
-    width: 7px; height: 7px;
-    background: var(--muted);
-    border-radius: 50%;
-    animation: bounce 1.2s infinite;
-  }
-  .dot:nth-child(2) { animation-delay: 0.2s; }
-  .dot:nth-child(3) { animation-delay: 0.4s; }
-
-  @keyframes bounce {
-    0%,60%,100% { transform: translateY(0); }
-    30%          { transform: translateY(-6px); background: var(--gold); }
-  }
-
-  /* ---- INPUT BAR ---- */
-  .input-bar {
-    padding: 16px 28px;
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-    display: flex;
-    gap: 10px;
-    flex-shrink: 0;
-  }
-
-  #input {
-    flex: 1;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px 16px;
-    color: var(--text);
-    font-family: 'DM Sans', sans-serif;
-    font-size: 0.88rem;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-
-  #input::placeholder { color: var(--muted); }
-  #input:focus { border-color: var(--gold); }
-
-  #send {
-    background: var(--gold);
-    color: #000;
-    border: none;
-    border-radius: 12px;
-    padding: 0 22px;
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 1rem;
-    letter-spacing: 2px;
-    cursor: pointer;
-    transition: background 0.2s, transform 0.1s;
-  }
-
-  #send:hover  { background: var(--gold2); }
-  #send:active { transform: scale(0.97); }
+:root{--bg:#07070d;--surface:#0f0f18;--card:#16161f;--border:#252535;--gold:#e8c96d;--gold2:#f5dfa0;--text:#e8e8f0;--muted:#6060a0;--accent:#5b8cff;--green:#6deba7;--red:#ff6b6b}
+*{margin:0;padding:0;box-sizing:border-box}html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-weight:300;overflow-x:hidden}
+.hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:40px 20px;text-align:center}
+.hero-bg{position:absolute;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 0%,#1a1030 0%,transparent 70%),radial-gradient(ellipse 60% 40% at 80% 80%,#0a1a2a 0%,transparent 60%),radial-gradient(ellipse 40% 60% at 20% 60%,#1a0a20 0%,transparent 60%);z-index:0}
+.strip{position:absolute;width:3px;background:repeating-linear-gradient(to bottom,var(--gold) 0px,var(--gold) 20px,transparent 20px,transparent 30px);opacity:.15;animation:floatStrip 8s ease-in-out infinite}
+.strip-1{left:8%;height:300px;top:10%}.strip-2{right:8%;height:200px;top:30%;animation-delay:2s}.strip-3{left:20%;height:150px;bottom:15%;animation-delay:4s}
+@keyframes floatStrip{0%,100%{transform:translateY(0) rotate(2deg);opacity:.1}50%{transform:translateY(-20px) rotate(-1deg);opacity:.2}}
+.hero-content{position:relative;z-index:1;max-width:800px}
+.hero-eyebrow{display:inline-block;font-size:.7rem;letter-spacing:4px;text-transform:uppercase;color:var(--gold);border:1px solid rgba(232,201,109,.3);padding:6px 20px;border-radius:20px;margin-bottom:28px;animation:fadeUp .8s ease both}
+.hero-title{font-family:'Bebas Neue',sans-serif;font-size:clamp(5rem,15vw,11rem);line-height:.9;letter-spacing:6px;color:var(--text);animation:fadeUp .8s ease .1s both}
+.hero-title span{color:var(--gold);font-family:'Playfair Display',serif;font-style:italic;font-size:.55em;letter-spacing:2px;display:block;margin-top:8px}
+.hero-sub{font-size:1rem;color:var(--muted);letter-spacing:1px;margin:24px 0 40px;line-height:1.7;animation:fadeUp .8s ease .2s both}
+.hero-sub b{color:var(--text);font-weight:400}
+.hero-cta{display:inline-flex;align-items:center;gap:10px;background:var(--gold);color:#000;font-family:'Bebas Neue',sans-serif;font-size:1.1rem;letter-spacing:3px;padding:16px 36px;border-radius:4px;text-decoration:none;transition:all .3s;animation:fadeUp .8s ease .3s both}
+.hero-cta:hover{background:var(--gold2);transform:translateY(-2px);box-shadow:0 12px 40px rgba(232,201,109,.3)}
+.hero-cta .arrow{font-size:1.3rem;transition:transform .3s}.hero-cta:hover .arrow{transform:translateX(4px)}
+.features{padding:100px 20px;max-width:1100px;margin:0 auto}
+.section-label{font-size:.65rem;letter-spacing:4px;text-transform:uppercase;color:var(--gold);margin-bottom:16px}
+.section-title{font-family:'Bebas Neue',sans-serif;font-size:clamp(2.5rem,5vw,4rem);letter-spacing:3px;margin-bottom:60px;line-height:1}
+.features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}
+.feature-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;transition:all .3s;position:relative;overflow:hidden}
+.feature-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:0;transition:opacity .3s}
+.feature-card:hover{border-color:rgba(232,201,109,.3);transform:translateY(-4px)}.feature-card:hover::before{opacity:1}
+.feature-icon{font-size:2rem;margin-bottom:16px}
+.feature-name{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:2px;color:var(--gold);margin-bottom:8px}
+.feature-desc{font-size:.82rem;color:var(--muted);line-height:1.7}
+.examples{padding:60px 20px 100px;max-width:1100px;margin:0 auto}
+.examples-grid{display:flex;flex-wrap:wrap;gap:10px}
+.example-pill{background:var(--surface);border:1px solid var(--border);border-radius:30px;padding:10px 20px;font-size:.82rem;color:var(--text);cursor:pointer;transition:all .2s;text-decoration:none;display:inline-block}
+.example-pill:hover{border-color:var(--gold);color:var(--gold);background:rgba(232,201,109,.05)}
+.example-pill .tag{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-right:6px}
+.chatbot-section{padding:60px 20px 100px;max-width:860px;margin:0 auto}
+#chatbot{scroll-margin-top:40px}
+.chat-container{background:var(--surface);border:1px solid var(--border);border-radius:24px;overflow:hidden;box-shadow:0 40px 120px rgba(0,0,0,.6)}
+.chat-header{background:var(--card);border-bottom:1px solid var(--border);padding:18px 24px;display:flex;align-items:center;gap:12px}
+.chat-header-logo{font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:3px;color:var(--gold)}
+.chat-header-logo span{color:var(--text)}
+.chat-status{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--green);letter-spacing:1px;text-transform:uppercase}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.3)}}
+#messages{height:480px;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:18px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.msg{display:flex;flex-direction:column;animation:fadeUp .3s ease}
+.msg.user{align-items:flex-end}.msg.bot{align-items:flex-start}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.bubble{max-width:560px;padding:13px 17px;border-radius:16px;font-size:.88rem;line-height:1.65}
+.msg.user .bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.msg.bot .bubble{background:var(--card);border:1px solid var(--border);border-bottom-left-radius:4px}
+.bubble b{color:var(--gold)}
+.claude-bubble{max-width:560px;padding:13px 17px;border-radius:16px;font-size:.85rem;line-height:1.7;background:linear-gradient(135deg,#1a1630,#141020);border:1px solid rgba(232,201,109,.25);border-bottom-left-radius:4px;color:#c8c8e8;margin-top:6px}
+.claude-label{font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-bottom:6px;display:flex;align-items:center;gap:5px}
+.claude-label::before{content:'✦';font-size:.7rem}
+.cards{display:flex;flex-direction:column;gap:8px;width:100%;max-width:620px;margin-top:8px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:13px 15px;display:flex;gap:12px;transition:border-color .2s;animation:fadeUp .3s ease both}
+.card:hover{border-color:rgba(232,201,109,.4)}
+.card-rank{font-family:'Bebas Neue',sans-serif;font-size:1.6rem;color:var(--border);line-height:1;min-width:28px;text-align:center}
+.card:hover .card-rank{color:var(--gold)}
+.card-body{flex:1}
+.card-title{font-size:.9rem;font-weight:500;margin-bottom:2px}
+.card-meta{font-size:.7rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.card-genres{font-size:.7rem;color:var(--gold);margin-bottom:5px}
+.card-overview{font-size:.76rem;color:#8080b0;line-height:1.5}
+.card-score{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap}
+.rating-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px}
+.cluster-grid{display:flex;flex-wrap:wrap;gap:8px;max-width:620px;margin-top:8px}
+.cluster-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;flex:1;min-width:150px;animation:fadeUp .3s ease both}
+.cluster-name{font-family:'Bebas Neue',sans-serif;font-size:.95rem;letter-spacing:1px;color:var(--gold);margin-bottom:4px}
+.cluster-stat{font-size:.7rem;color:var(--muted);line-height:1.7}
+.typing{display:flex;gap:5px;padding:13px 16px;background:var(--card);border:1px solid var(--border);border-radius:16px;border-bottom-left-radius:4px;width:fit-content}
+.dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:bounce 1.2s infinite}
+.dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px);background:var(--gold)}}
+.input-bar{padding:16px 20px;border-top:1px solid var(--border);background:var(--card);display:flex;gap:10px}
+#input{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:.87rem;outline:none;transition:border-color .2s}
+#input::placeholder{color:var(--muted)}#input:focus{border-color:var(--gold)}
+#send{background:var(--gold);color:#000;border:none;border-radius:10px;padding:0 22px;font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:2px;cursor:pointer;transition:all .2s}
+#send:hover{background:var(--gold2)}#send:active{transform:scale(.97)}
+footer{border-top:1px solid var(--border);padding:30px 20px;text-align:center;font-size:.75rem;color:var(--muted);letter-spacing:1px}
+footer b{color:var(--gold)}
 </style>
 </head>
 <body>
-
-<header>
-  <div>
-    <div class="logo">Cine<span>Agent</span></div>
-    <div class="tagline">AI-Powered Movie Intelligence</div>
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="strip strip-1"></div><div class="strip strip-2"></div><div class="strip strip-3"></div>
+  <div class="hero-content">
+    <div class="hero-eyebrow">✦ AI-Powered Movie Intelligence ✦</div>
+    <div class="hero-title">CineAgent<span>Your Personal Film Oracle</span></div>
+    <p class="hero-sub">Powered by <b>Machine Learning</b> · <b>NLP</b> · <b>Claude AI</b><br>4,705 movies · Smart recommendations · Instant answers</p>
+    <a href="#chatbot" class="hero-cta">Start Exploring <span class="arrow">→</span></a>
   </div>
-  <div class="pill">● Live</div>
-</header>
+</section>
 
-<div class="main">
+<section class="features">
+  <div class="section-label">What I Can Do</div>
+  <div class="section-title">Four Ways to Discover Films</div>
+  <div class="features-grid">
+    <div class="feature-card"><div class="feature-icon">🔍</div><div class="feature-name">Smart Search</div><div class="feature-desc">Describe a mood, story, or feeling in plain English. TF-IDF + Genre Detection + Cluster Matching find the perfect fit.</div></div>
+    <div class="feature-card"><div class="feature-icon">🎬</div><div class="feature-name">Similar Movies</div><div class="feature-desc">Type "movies similar to Inception" and get recommendations based on Cosine Similarity across genres, cast, and themes.</div></div>
+    <div class="feature-card"><div class="feature-icon">🔴</div><div class="feature-name">Anomaly Detection</div><div class="feature-desc">Discover hidden gems, box-office flops, and statistically unusual films using Isolation Forest AI.</div></div>
+    <div class="feature-card"><div class="feature-icon">📊</div><div class="feature-name">Cluster Explorer</div><div class="feature-desc">Browse 5 auto-generated movie clusters created by K-Means — from Action/Sci-Fi to Family/Animation.</div></div>
+  </div>
+</section>
 
-  <aside class="sidebar">
-    <div class="sidebar-title">Try asking</div>
+<section class="examples">
+  <div class="section-label">Try Asking</div>
+  <div class="section-title">Example Questions</div>
+  <div class="examples-grid">
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('I want a scary horror movie with ghosts and mystery')"><span class="tag">Search</span>Scary ghost mystery</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('funny romantic comedy with love story')"><span class="tag">Search</span>Funny romantic comedy</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('movies similar to Inception')"><span class="tag">Similar</span>Movies like Inception</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('movies similar to The Dark Knight')"><span class="tag">Similar</span>Movies like The Dark Knight</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('show me big budget box office flops')"><span class="tag">Anomaly</span>Big budget flops</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('find me hidden gems with high rating')"><span class="tag">Anomaly</span>Hidden gems</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('animated film for kids with magic and dragons')"><span class="tag">Search</span>Animated kids fantasy</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('space adventure with aliens and robots')"><span class="tag">Search</span>Space sci-fi adventure</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('what are the movie clusters')"><span class="tag">Clusters</span>Explore clusters</a>
+    <a href="#chatbot" class="example-pill" onclick="setSuggestion('soldier fighting in world war')"><span class="tag">Search</span>World war movie</a>
+  </div>
+</section>
 
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)"
-         data-q="I want a funny romantic comedy with a love story">
-      <span class="s-tag">Search</span>
-      Funny romantic comedy with love story
+<section class="chatbot-section">
+  <div class="section-label">Talk to the Agent</div>
+  <div class="section-title" style="margin-bottom:30px">Ask Anything</div>
+  <div class="chat-container" id="chatbot">
+    <div class="chat-header">
+      <div class="chat-header-logo">Cine<span>Agent</span></div>
+      <div class="chat-status"><div class="status-dot"></div>Online</div>
     </div>
-
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)"
-         data-q="scary ghost movie with mystery and suspense">
-      <span class="s-tag">Search</span>
-      Scary ghost mystery movie
-    </div>
-
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)"
-         data-q="movies similar to Inception">
-      <span class="s-tag">Similar</span>
-      Movies similar to Inception
-    </div>
-
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)"
-         data-q="animated film for kids with magic and fantasy">
-      <span class="s-tag">Search</span>
-      Animated kids fantasy film
-    </div>
-
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)"
-         data-q="show me big budget box office flops">
-      <span class="s-tag">Anomaly</span>
-      Big budget box-office flops
-    </div>
-
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)"
-         data-q="movies similar to The Dark Knight">
-      <span class="s-tag">Similar</span>
-      Movies similar to The Dark Knight
-    </div>
-
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)"
-         data-q="what are the movie clusters">
-      <span class="s-tag">Clusters</span>
-      What are the movie clusters?
-    </div>
-
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)"
-         data-q="show me movies with unusual runtime">
-      <span class="s-tag">Anomaly</span>
-      Movies with unusual runtime
-    </div>
-  </aside>
-
-  <div class="chat-wrap">
     <div id="messages">
       <div class="msg bot">
-        <div class="bubble">
-          👋 Welcome to <b>CineAgent</b> — your AI movie assistant.<br><br>
-          I can help you:<br>
-          • <b>Search</b> by mood, genre, or description<br>
-          • <b>Find similar</b> movies ("movies similar to Inception")<br>
-          • <b>Detect anomalies</b> (flops, hidden gems, unusual movies)<br>
-          • <b>Explore clusters</b> — how movies are grouped<br><br>
-          What are you in the mood for?
-        </div>
+        <div class="bubble">👋 Welcome to <b>CineAgent</b>!<br><br>I combine <b>Machine Learning</b> with <b>Claude AI</b> to give you smart, conversational movie recommendations.<br><br>Ask me anything — describe a mood, name a movie you love, or ask for something unusual. 🎬</div>
       </div>
     </div>
-
     <div class="input-bar">
-      <input id="input" type="text" placeholder="Describe a movie, or ask anything..." autocomplete="off" />
+      <input id="input" type="text" placeholder="Describe a movie, or ask anything..." autocomplete="off"/>
       <button id="send">Send</button>
     </div>
   </div>
+</section>
 
-</div>
+<footer><b>CineAgent</b> · Built with Machine Learning, NLP &amp; Claude AI · 4,705 Movies · © 2025</footer>
 
 <script>
-const messagesEl = document.getElementById("messages");
-const inputEl    = document.getElementById("input");
-const sendBtn    = document.getElementById("send");
-
-function ratingColor(r) {
-  if (r >= 7.5) return "#6deba7";
-  if (r >= 6.0) return "#e8c96d";
-  return "#ff6b6b";
+const messagesEl=document.getElementById("messages"),inputEl=document.getElementById("input"),sendBtn=document.getElementById("send");
+function ratingColor(r){return r>=7.5?"#6deba7":r>=6?"#e8c96d":"#ff6b6b"}
+function renderCards(results){if(!results||!results.length)return"";return`<div class="cards">${results.map((r,i)=>`<div class="card" style="animation-delay:${i*.06}s"><div class="card-rank">${r.rank}</div><div class="card-body"><div class="card-title">${r.title}</div><div class="card-meta"><span>${r.year}</span><span>⬝ ${r.director}</span><span>⬝ <span class="rating-dot" style="background:${ratingColor(r.rating)}"></span>${r.rating}/10</span></div><div class="card-genres">${r.genres}</div><div class="card-overview">${r.overview}</div></div><div class="card-score">score<br>${r.score}</div></div>`).join("")}</div>`}
+function renderClusters(clusters){if(!clusters)return"";return`<div class="cluster-grid">${clusters.map((c,i)=>`<div class="cluster-card" style="animation-delay:${i*.07}s"><div class="cluster-name">${c.name}</div><div class="cluster-stat">🎬 ${c.count} movies<br>⭐ Avg: ${c.avg_rating}<br>🎭 ${c.top_genres}</div></div>`).join("")}</div>`}
+function addMessage(role,html,extra=""){const div=document.createElement("div");div.className=`msg ${role}`;div.innerHTML=`<div class="bubble">${html}</div>${extra}`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
+function addClaudeReply(text){const div=document.createElement("div");div.className="msg bot";div.innerHTML=`<div class="claude-bubble"><div class="claude-label">Claude AI Analysis</div>${text}</div>`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
+function addTyping(){const div=document.createElement("div");div.className="msg bot";div.id="typing";div.innerHTML=`<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
+function removeTyping(){const t=document.getElementById("typing");if(t)t.remove()}
+async function sendMessage(text){
+  if(!text.trim())return;
+  addMessage("user",text);inputEl.value="";addTyping();
+  try{
+    const res=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:text})});
+    const data=await res.json();removeTyping();
+    const extra=data.intent==="cluster_info"?renderClusters(data.clusters):renderCards(data.results);
+    addMessage("bot",data.reply,extra);
+    if(data.claude_reply){setTimeout(()=>addClaudeReply(data.claude_reply),400)}
+  }catch(e){removeTyping();addMessage("bot","⚠️ Something went wrong. Please try again.")}
 }
-
-function renderCards(results) {
-  if (!results || results.length === 0) return "";
-  return `<div class="cards">${results.map((r, i) => `
-    <div class="card" style="animation-delay:${i*0.06}s">
-      <div class="card-rank">${r.rank}</div>
-      <div class="card-body">
-        <div class="card-title">${r.title}</div>
-        <div class="card-meta">
-          <span>${r.year}</span>
-          <span>⬝ ${r.director}</span>
-          <span>⬝ <span class="rating-dot" style="background:${ratingColor(r.rating)}"></span>${r.rating}/10</span>
-        </div>
-        <div class="card-genres">${r.genres}</div>
-        <div class="card-overview">${r.overview}</div>
-      </div>
-      <div class="card-score">score<br>${r.score}</div>
-    </div>`).join("")}</div>`;
-}
-
-function renderClusters(clusters) {
-  if (!clusters) return "";
-  return `<div class="cluster-grid">${clusters.map((c,i) => `
-    <div class="cluster-card" style="animation-delay:${i*0.07}s">
-      <div class="cluster-name">${c.name}</div>
-      <div class="cluster-stat">
-        🎬 ${c.count} movies<br>
-        ⭐ Avg rating: ${c.avg_rating}<br>
-        🎭 ${c.top_genres}
-      </div>
-    </div>`).join("")}</div>`;
-}
-
-function addMessage(role, html, extra="") {
-  const div = document.createElement("div");
-  div.className = `msg ${role}`;
-  div.innerHTML = `<div class="bubble">${html}</div>${extra}`;
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-function addTyping() {
-  const div = document.createElement("div");
-  div.className = "msg bot";
-  div.id = "typing";
-  div.innerHTML = `<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
-function removeTyping() {
-  const t = document.getElementById("typing");
-  if (t) t.remove();
-}
-
-async function sendMessage(text) {
-  if (!text.trim()) return;
-  addMessage("user", text);
-  inputEl.value = "";
-  addTyping();
-
-  try {
-    const res  = await fetch("/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text })
-    });
-    const data = await res.json();
-    removeTyping();
-
-    const extra = data.intent === "cluster_info"
-      ? renderClusters(data.clusters)
-      : renderCards(data.results);
-
-    addMessage("bot", data.reply, extra);
-
-  } catch(e) {
-    removeTyping();
-    addMessage("bot", "⚠️ Something went wrong. Please try again.");
-  }
-}
-
-function sendSuggestion(q) { sendMessage(q); }
-
-sendBtn.addEventListener("click", () => sendMessage(inputEl.value));
-inputEl.addEventListener("keydown", e => { if (e.key === "Enter") sendMessage(inputEl.value); });
+function setSuggestion(q){inputEl.value=q;inputEl.focus()}
+sendBtn.addEventListener("click",()=>sendMessage(inputEl.value));
+inputEl.addEventListener("keydown",e=>{if(e.key==="Enter")sendMessage(inputEl.value)});
 </script>
 </body>
-</html>
-"""
+</html>"""
 
 # ==============================================================
-# 11. RUN
+# 12. RUN
 # ==============================================================
 
 if __name__ == "__main__":
