@@ -255,7 +255,8 @@ def genres_to_clusters(genres):
 
 
 def extract_year(text):
-    m = re.search(r"\b(19\d{2}|20\d{2})\b", text)
+    # \b fails on "מ2006" (Hebrew letter before digit), so use lookahead/lookbehind instead
+    m = re.search(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", text)
     return int(m.group(1)) if m else None
 
 
