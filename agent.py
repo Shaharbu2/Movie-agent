@@ -11,6 +11,7 @@ from sklearn.cluster import MiniBatchKMeans
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.ensemble import IsolationForest
+from scipy.sparse import hstack, csr_matrix
 
 app = Flask(__name__)
 
@@ -51,16 +52,19 @@ numeric_scaled = pd.DataFrame(
 
 def vectorize_column(col, max_features=None):
     vec = CountVectorizer(
-        tokenizer=lambda x: [i.strip() for i in str(x).split(",")],
-        token_pattern=None, binary=True, max_features=max_features
+        tokenizer=lambda x: [i.strip() for i in str(x).split(",") if i.strip()],
+        token_pattern=None,
+        binary=True,
+        max_features=max_features
     )
-    m = vec.fit_transform(df[col].astype(str))
-    return pd.DataFrame(m.toarray(),
-        columns=[col + "_" + c for c in vec.get_feature_names_out()])
+    return vec.fit_transform(df[col].astype(str))
 
-genres_vec   = vectorize_column("genres")
+genres_vec = vectorize_column("genres")
 keywords_vec = vectorize_column("keywords", max_features=50)
-cluster_data = pd.concat([numeric_scaled, genres_vec, keywords_vec], axis=1)
+
+# Keep feature matrices sparse to support 50,000 movies on Render Free memory.
+numeric_sparse = csr_matrix(numeric_scaled.values)
+cluster_data = hstack([numeric_sparse, genres_vec, keywords_vec]).tocsr()
 
 kmeans = MiniBatchKMeans(n_clusters=5, random_state=42, n_init=3)
 df["cluster"] = kmeans.fit_predict(cluster_data)
@@ -90,10 +94,8 @@ tfidf_matrix = tfidf.fit_transform(df["overview_clean"])
 # 4. SIMILARITY DATA (no full matrix — too large for 50k movies)
 # ==============================================================
 
-sim_data = pd.concat([numeric_scaled, genres_vec,
-                      vectorize_column("keywords", max_features=50)], axis=1)
-from scipy.sparse import csr_matrix as sp_csr
-sim_data_sparse = sp_csr(sim_data.values)
+# Reuse the sparse feature matrix. Do not build a dense 50k x features DataFrame.
+sim_data_sparse = hstack([numeric_sparse, genres_vec, keywords_vec]).tocsr()
 
 # ==============================================================
 # 5. ANOMALY DETECTION
@@ -103,7 +105,7 @@ iso_features = ["popularity", "vote_average", "vote_count", "runtime"]
 iso_data = df[iso_features].fillna(0)
 iso_scaler = MinMaxScaler()
 iso_scaled = iso_scaler.fit_transform(iso_data)
-iso = IsolationForest(n_estimators=100, contamination=0.05, random_state=42)
+iso = IsolationForest(n_estimators=25, contamination=0.05, random_state=42)
 df["anomaly"]       = iso.fit_predict(iso_scaled)
 df["anomaly_score"] = iso.decision_function(iso_scaled)
 
@@ -332,10 +334,6 @@ def call_openai(user_text, results, intent):
 @app.route("/")
 def index():
     return Response(HTML_PAGE, mimetype="text/html")
-
-@app.route("/api-key")
-def api_key_route():
-    return jsonify({"key": os.environ.get("OPENAI_API_KEY", "")})
 
 @app.route("/test-openai")
 def test_openai():
