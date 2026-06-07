@@ -1096,11 +1096,11 @@ function send(){{
     rmTyping();
     const hasResults = data.results && data.results.length > 0;
     let extra = '';
-    if (data.intent === 'cluster_info') {
+    if (data.intent === 'cluster_info') {{
       extra = clusters(data.clusters);
-    } else if (hasResults) {
+    }} else if (hasResults) {{
       extra = cards(data.results);
-    }
+    }}
     add('bot', '<div class="bubble">' + esc(data.reply) + '</div>' + extra);
   }})
   .catch(() => {{
