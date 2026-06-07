@@ -211,20 +211,6 @@ def get_streaming(row):
 # 8. INTENT DETECTION
 # ==============================================================
 
-def extract_year_filter(text):
-    """Extract year from text like 'from 2000' or 'year 2000' or just '2000'"""
-    m = re.search(r'\b(19[0-9]{2}|20[0-2][0-9])\b', text)
-    return int(m.group(1)) if m else None
-
-def extract_streaming_filter(text):
-    """Extract streaming platform filter from text"""
-    t = text.lower()
-    if any(k in t for k in ["netflix","נטפליקס"]):         return "Netflix"
-    if any(k in t for k in ["hulu","הולו"]):               return "Hulu"
-    if any(k in t for k in ["prime","פריים","amazon"]):    return "Prime Video"
-    if any(k in t for k in ["disney","דיסני"]):            return "Disney+"
-    return None
-
 def detect_intent(text):
     t = text.lower()
     for pat in [r"similar to (.+)", r"like (.+)", r"movies like (.+)",
@@ -243,12 +229,9 @@ def detect_intent(text):
 # 9. HANDLERS
 # ==============================================================
 
-def handle_search(user_text, top_n=3):
+def handle_search(user_text, top_n=5):
     matched_genres   = extract_genres(user_text)
     matched_clusters = genres_to_clusters(matched_genres)
-    year_filter      = extract_year_filter(user_text)
-    streaming_filter = extract_streaming_filter(user_text)
-
     cleaned  = clean_text(user_text)
     user_vec = tfidf.transform([cleaned])
     tfidf_scores = cosine_similarity(user_vec, tfidf_matrix).flatten()
@@ -262,22 +245,7 @@ def handle_search(user_text, top_n=3):
     cluster_scores = df["cluster"].apply(
         lambda c: 1.0 if c in matched_clusters else 0.0).values
     combined = 0.5 * tfidf_scores + 0.3 * genre_scores + 0.2 * cluster_scores
-
-    # Apply year filter
-    working_df = df.copy()
-    working_combined = combined.copy()
-    if year_filter:
-        mask = df["release_year"].astype(str).str.startswith(str(year_filter))
-        working_combined[~mask.values] = -1
-
-    # Apply streaming filter
-    if streaming_filter and streaming_filter in df.columns:
-        mask2 = df[streaming_filter] == 1
-        working_combined[~mask2.values] = -1
-
-    top_idx = working_combined.argsort()[-top_n:][::-1]
-    # Remove filtered-out results
-    top_idx = [i for i in top_idx if working_combined[i] > -1][:top_n]
+    top_idx  = combined.argsort()[-top_n:][::-1]
 
     results = []
     for i, idx in enumerate(top_idx):
@@ -298,7 +266,7 @@ def handle_search(user_text, top_n=3):
     return {"intent": "search", "reply": reply, "results": results, "genres": matched_genres}
 
 
-def handle_similar(movie_title, top_n=3):
+def handle_similar(movie_title, top_n=5):
     matches = df[df["title"].str.lower().str.contains(movie_title.lower(), na=False)]
     if matches.empty:
         return {"intent": "similar", "reply": "מצטער, לא מצאתי את הסרט '" + movie_title + "' במסד הנתונים.", "results": []}
@@ -321,7 +289,7 @@ def handle_similar(movie_title, top_n=3):
     return {"intent": "similar", "reply": "הנה " + str(top_n) + " סרטים דומים ל-" + found + ":", "results": results}
 
 
-def handle_anomaly(user_text, top_n=3):
+def handle_anomaly(user_text, top_n=6):
     t = user_text.lower()
     anomalies = df[df["anomaly"] == -1].copy()
     if any(k in t for k in ["flop", "פלופ", "budget", "תקציב"]):
@@ -457,214 +425,148 @@ HTML_PAGE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CineAgent</title>
-<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&family=Bebas+Neue&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
 :root{
-  --bg:#080808;
-  --surface:#0f0f0f;
-  --card:#141414;
-  --border:#2a0a0a;
-  --red:#c0392b;
-  --red2:#e74c3c;
-  --red3:#ff6b6b;
-  --gold:#f5c518;
-  --text:#f0e6e6;
-  --muted:#806060;
-  --dim:#1a0a0a;
+  --bg:#060914;--surface:#0b0d1a;--card:#111320;--border:#1e2140;
+  --gold:#e8b84b;--gold2:#f5d07a;--text:#dde2ff;--muted:#4a5080;
+  --accent:#3d6fff;--green:#3de0a0;--ai:#0e1128;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
 body{background:var(--bg);color:var(--text);font-family:'Heebo',sans-serif;font-weight:300;direction:rtl;overflow:hidden;display:flex;flex-direction:column;}
-
-/* ---- CINEMA BACKGROUND ---- */
-.bg{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
-
-/* Film grain */
-.grain{position:absolute;inset:0;opacity:.04;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
-
-/* Spotlight beams */
-.beam{position:absolute;top:-10%;width:2px;height:120%;background:linear-gradient(to bottom,transparent,rgba(192,57,43,0.15),transparent);animation:sweepBeam 8s ease-in-out infinite;transform-origin:top center}
-.beam1{left:20%;animation-delay:0s}
-.beam2{left:50%;animation-delay:2.5s}
-.beam3{left:80%;animation-delay:5s}
-@keyframes sweepBeam{0%,100%{transform:rotate(-8deg);opacity:.4}50%{transform:rotate(8deg);opacity:.8}}
-
-/* Bottom glow */
-.floor-glow{position:absolute;bottom:0;left:0;right:0;height:300px;background:radial-gradient(ellipse 80% 100% at 50% 100%,rgba(192,57,43,0.12) 0%,transparent 70%)}
-
-/* Moving marquee dots */
-.marquee-top,.marquee-bottom{position:absolute;left:0;right:0;height:3px;display:flex;gap:0;overflow:hidden}
-.marquee-top{top:70px}
-.marquee-bottom{bottom:70px}
-.mdot{width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red2);animation:marqueeDot 2s linear infinite;flex-shrink:0}
-.mdot:nth-child(even){background:var(--gold);box-shadow:0 0 8px var(--gold);animation-delay:.2s}
-@keyframes marqueeDot{0%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.6)}100%{opacity:1;transform:scale(1)}}
-
-/* Curtain sides */
-.curtain-l,.curtain-r{position:absolute;top:0;bottom:0;width:60px;z-index:1}
-.curtain-l{left:0;background:linear-gradient(to right,rgba(60,0,0,0.6),transparent)}
-.curtain-r{right:0;background:linear-gradient(to left,rgba(60,0,0,0.6),transparent)}
-
-/* ---- HEADER ---- */
-header{position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:14px 32px;border-bottom:1px solid rgba(192,57,43,0.3);background:rgba(8,8,8,0.95);backdrop-filter:blur(10px);flex-shrink:0}
-.logo-wrap{display:flex;align-items:center;gap:12px}
-.logo-icon{font-size:1.6rem;filter:drop-shadow(0 0 8px var(--red))}
-.logo-text{font-family:'Bebas Neue',sans-serif;font-size:1.8rem;letter-spacing:4px;color:var(--text);line-height:1}
-.logo-text span{color:var(--red2)}
-.logo-sub{font-size:.6rem;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin-top:2px}
-.badge{display:flex;align-items:center;gap:6px;background:rgba(192,57,43,0.1);border:1px solid rgba(192,57,43,0.3);border-radius:20px;padding:5px 14px;font-size:.68rem;color:var(--red3);font-weight:500}
-.bdot{width:6px;height:6px;border-radius:50%;background:var(--red2);box-shadow:0 0 6px var(--red2);animation:rpulse 2s infinite}
-@keyframes rpulse{0%,100%{opacity:1;box-shadow:0 0 6px var(--red2)}50%{opacity:.4;box-shadow:0 0 12px var(--red2)}}
-
-/* ---- MAIN ---- */
+.bg-wrap{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.bg-grad{position:absolute;inset:0;background:radial-gradient(ellipse 70% 50% at 50% -10%,rgba(61,111,255,0.18) 0%,transparent 60%),radial-gradient(ellipse 40% 40% at 85% 80%,rgba(232,184,75,0.07) 0%,transparent 55%)}
+.grid{position:absolute;inset:0;background-image:linear-gradient(rgba(61,111,255,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(61,111,255,0.04) 1px,transparent 1px);background-size:60px 60px}
+.orb{position:absolute;border-radius:50%;filter:blur(80px);animation:float 8s ease-in-out infinite}
+.orb1{width:400px;height:400px;background:rgba(61,111,255,0.08);top:-100px;left:50%;transform:translateX(-50%)}
+.orb2{width:300px;height:300px;background:rgba(232,184,75,0.05);bottom:100px;right:10%;animation-delay:3s}
+@keyframes float{0%,100%{transform:translateY(0) translateX(-50%)}50%{transform:translateY(-30px) translateX(-50%)}}
+header{position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid rgba(61,111,255,0.15);background:rgba(6,9,20,0.8);backdrop-filter:blur(20px);flex-shrink:0}
+.logo-wrap{display:flex;align-items:center;gap:14px}
+.logo-icon{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#1a2a6c,#3d6fff);border:1px solid rgba(61,111,255,0.4);display:flex;align-items:center;justify-content:center;font-size:1.2rem;box-shadow:0 0 20px rgba(61,111,255,0.3)}
+.logo-text{font-size:1.3rem;font-weight:900;color:var(--text);letter-spacing:1px}
+.logo-text span{color:var(--gold)}
+.logo-sub{font-size:.65rem;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:1px}
+.badge{display:flex;align-items:center;gap:6px;background:rgba(61,224,160,0.08);border:1px solid rgba(61,224,160,0.2);border-radius:20px;padding:5px 14px;font-size:.68rem;color:var(--green);font-weight:500}
+.bdot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .main{position:relative;z-index:5;flex:1;display:flex;flex-direction:column;overflow:hidden}
-
-/* ---- SUGGESTIONS BAR ---- */
-.suggestions-bar{padding:12px 24px;border-bottom:1px solid rgba(192,57,43,0.15);background:rgba(10,0,0,0.6);display:flex;gap:8px;flex-wrap:wrap;justify-content:center;flex-shrink:0}
-.sug{background:rgba(192,57,43,0.08);border:1px solid rgba(192,57,43,0.2);border-radius:20px;padding:6px 14px;font-size:.75rem;color:var(--muted);cursor:pointer;transition:all .2s;white-space:nowrap;font-family:'Heebo',sans-serif}
-.sug:hover{border-color:var(--red2);color:var(--text);background:rgba(192,57,43,0.15);box-shadow:0 0 10px rgba(192,57,43,0.2)}
-.sug-tag{color:var(--red3);font-weight:700;margin-left:4px;font-size:.65rem}
-
-/* ---- MESSAGES ---- */
-#messages{flex:1;overflow-y:auto;padding:20px 15%;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
-@media(max-width:900px){#messages{padding:16px 4%}}
-
+#welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;text-align:center;gap:28px}
+.wicon{width:90px;height:90px;border-radius:24px;background:linear-gradient(135deg,#0d1a4a,#1a3a8f);border:1px solid rgba(61,111,255,0.35);display:flex;align-items:center;justify-content:center;font-size:2.5rem;box-shadow:0 0 60px rgba(61,111,255,0.25)}
+.wtitle{font-size:clamp(2rem,5vw,3.2rem);font-weight:900;background:linear-gradient(135deg,#dde2ff 0%,#e8b84b 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1}
+.wsub{font-size:.95rem;color:var(--muted);line-height:1.8;max-width:520px}
+.wsub b{color:var(--text);font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:640px}
+.chip{background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:24px;padding:8px 16px;font-size:.78rem;color:var(--muted);cursor:pointer;transition:all .2s;white-space:nowrap}
+.chip:hover{border-color:var(--accent);color:var(--text);background:rgba(61,111,255,0.08)}
+.ctag{color:var(--gold);font-weight:700;margin-left:4px;font-size:.65rem}
+#chat-screen{flex:1;display:none;flex-direction:column;overflow:hidden}
+#chat-screen.active{display:flex}
+#messages{flex:1;overflow-y:auto;padding:24px 20%;display:flex;flex-direction:column;gap:20px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+@media(max-width:900px){#messages{padding:20px 5%}}
 .msg{display:flex;flex-direction:column;gap:8px;animation:msgIn .3s ease}
-@keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.msg.user{align-items:flex-start}
-.msg.bot{align-items:flex-end}
-
-.bubble{max-width:580px;padding:12px 18px;border-radius:4px;font-size:.88rem;line-height:1.7}
-.msg.user .bubble{background:linear-gradient(135deg,#6b0000,#c0392b);color:#fff;border-bottom-left-radius:16px;box-shadow:0 4px 20px rgba(192,57,43,0.3)}
-.msg.bot .bubble{background:var(--card);border:1px solid rgba(192,57,43,0.2);border-bottom-right-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.4)}
+@keyframes msgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{align-items:flex-start}.msg.bot{align-items:flex-end}
+.bubble{max-width:600px;padding:13px 18px;border-radius:18px;font-size:.9rem;line-height:1.7}
+.msg.user .bubble{background:linear-gradient(135deg,#1a3080,#3d6fff);color:#fff;border-bottom-left-radius:4px;box-shadow:0 4px 20px rgba(61,111,255,0.3)}
+.msg.bot .bubble{background:var(--card);border:1px solid var(--border);border-bottom-right-radius:4px}
 .bubble b{color:var(--gold)}
-
-/* AI box */
-.ai-box{max-width:580px;padding:14px 18px;border-radius:4px;border-bottom-right-radius:16px;background:#0a0000;border:1px solid rgba(245,197,24,0.25);font-size:.85rem;line-height:1.75;color:#c8b090;position:relative;overflow:hidden}
-.ai-box::before{content:'';position:absolute;top:0;right:0;left:0;height:1px;background:linear-gradient(90deg,transparent,rgba(245,197,24,0.5),transparent)}
-.ai-tag{font-size:.58rem;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-bottom:8px;font-weight:700;display:flex;align-items:center;gap:5px}
-.ai-tag::before{content:"★";font-size:.7rem}
-
-/* Cards */
-.cards{display:flex;flex-direction:column;gap:8px;width:100%;max-width:580px}
-.card{background:var(--card);border:1px solid rgba(192,57,43,0.15);border-right:3px solid var(--red);padding:12px 14px;display:flex;gap:12px;transition:all .2s;border-radius:2px}
-.card:hover{border-color:rgba(192,57,43,0.5);border-right-color:var(--red2);transform:translateX(4px);box-shadow:0 4px 20px rgba(192,57,43,0.15)}
-.cnum{font-family:'Bebas Neue',sans-serif;font-size:2rem;color:rgba(192,57,43,0.3);line-height:1;min-width:26px;text-align:center;transition:color .2s}
-.card:hover .cnum{color:var(--red2)}
+.ai-box{max-width:600px;padding:16px 18px;border-radius:18px;border-bottom-right-radius:4px;background:var(--ai);border:1px solid rgba(232,184,75,0.2);font-size:.87rem;line-height:1.75;color:#b8c0e8;position:relative;overflow:hidden}
+.ai-box::before{content:'';position:absolute;top:0;right:0;left:0;height:1px;background:linear-gradient(90deg,transparent,rgba(232,184,75,0.4),transparent)}
+.ai-tag{font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-bottom:10px;font-weight:700;display:flex;align-items:center;gap:6px}
+.ai-tag::before{content:"✦";font-size:.75rem}
+.cards{display:flex;flex-direction:column;gap:10px;width:100%;max-width:600px}
+.card{background:rgba(17,19,32,0.8);border:1px solid var(--border);border-radius:14px;padding:14px 16px;display:flex;gap:14px;transition:all .2s}
+.card:hover{border-color:rgba(61,111,255,0.4);transform:translateX(4px);box-shadow:0 4px 24px rgba(61,111,255,0.1)}
+.cnum{font-size:1.8rem;font-weight:900;color:var(--border);line-height:1;min-width:28px;text-align:center;transition:color .2s}
+.card:hover .cnum{color:var(--gold)}
 .cbody{flex:1;min-width:0}
-.ctitle{font-size:.9rem;font-weight:700;margin-bottom:3px;color:var(--text)}
-.cmeta{font-size:.67rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;align-items:center}
-.cgenres{font-size:.67rem;color:rgba(192,57,43,0.8);margin-bottom:4px;font-weight:500}
-.cstream{font-size:.63rem;margin-bottom:4px}
-.sp{display:inline-block;padding:2px 6px;border-radius:3px;margin-left:3px;font-weight:600;font-size:.6rem}
-.sp-netflix{background:rgba(229,9,20,0.2);color:#ff4444;border:1px solid rgba(229,9,20,0.3)}
-.sp-hulu{background:rgba(28,231,131,0.1);color:#1ce783;border:1px solid rgba(28,231,131,0.25)}
-.sp-prime{background:rgba(0,168,225,0.1);color:#00a8e1;border:1px solid rgba(0,168,225,0.25)}
-.sp-disney{background:rgba(17,60,219,0.15);color:#5577ff;border:1px solid rgba(17,60,219,0.3)}
-.cdesc{font-size:.73rem;color:#604040;line-height:1.5}
-.cscore{font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap;text-align:center}
+.ctitle{font-size:.92rem;font-weight:700;margin-bottom:4px;color:var(--text)}
+.cmeta{font-size:.68rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:5px;align-items:center}
+.cgenres{font-size:.68rem;color:var(--gold);margin-bottom:4px;font-weight:500}
+.cstream{font-size:.65rem;margin-bottom:5px}
+.sp{display:inline-block;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:600}
+.sp-netflix{background:rgba(229,9,20,0.2);color:#e55;border:1px solid rgba(229,9,20,0.3)}
+.sp-hulu{background:rgba(28,231,131,0.15);color:#1ce783;border:1px solid rgba(28,231,131,0.3)}
+.sp-prime{background:rgba(0,168,225,0.15);color:#00a8e1;border:1px solid rgba(0,168,225,0.3)}
+.sp-disney{background:rgba(17,60,219,0.2);color:#5577ff;border:1px solid rgba(17,60,219,0.3)}
+.cdesc{font-size:.75rem;color:#5a6090;line-height:1.55}
+.cscore{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap;text-align:center}
 .rdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:3px}
-
-/* Clusters */
-.clusters{display:flex;flex-wrap:wrap;gap:8px;max-width:580px}
-.clu{background:var(--card);border:1px solid rgba(192,57,43,0.2);border-top:2px solid var(--red);padding:12px 14px;flex:1;min-width:140px}
-.clu-name{font-size:.82rem;font-weight:700;color:var(--red3);margin-bottom:5px}
-.clu-stat{font-size:.68rem;color:var(--muted);line-height:1.8}
-
-/* Typing */
-.typing{display:flex;gap:5px;padding:12px 16px;background:var(--card);border:1px solid rgba(192,57,43,0.2);border-radius:4px;border-bottom-right-radius:16px;width:fit-content}
-.dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:tdot 1.2s infinite}
+.clusters{display:flex;flex-wrap:wrap;gap:8px;max-width:600px}
+.clu{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;flex:1;min-width:150px}
+.clu-name{font-size:.85rem;font-weight:700;color:var(--gold);margin-bottom:6px}
+.clu-stat{font-size:.7rem;color:var(--muted);line-height:1.8}
+.typing{display:flex;gap:5px;padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:18px;border-bottom-right-radius:4px;width:fit-content}
+.dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:b 1.2s infinite}
 .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
-@keyframes tdot{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px);background:var(--red2);box-shadow:0 0 6px var(--red2)}}
-
-/* ---- INPUT BAR ---- */
-.input-wrap{position:relative;z-index:10;padding:14px 15%;background:rgba(8,8,8,0.95);backdrop-filter:blur(10px);border-top:1px solid rgba(192,57,43,0.2);flex-shrink:0}
-@media(max-width:900px){.input-wrap{padding:12px 4%}}
-.input-inner{display:flex;align-items:center;background:var(--dim);border:1px solid rgba(192,57,43,0.3);border-radius:4px;padding:6px 6px 6px 14px;transition:border-color .2s;box-shadow:inset 0 0 20px rgba(0,0,0,0.5)}
-.input-inner:focus-within{border-color:var(--red2);box-shadow:inset 0 0 20px rgba(0,0,0,0.5),0 0 0 2px rgba(192,57,43,0.15)}
-#inp{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:'Heebo',sans-serif;font-size:.9rem;direction:rtl;padding:8px 4px}
+@keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px);background:var(--gold)}}
+.input-wrap{position:relative;z-index:10;padding:20px 20%;background:rgba(6,9,20,0.7);backdrop-filter:blur(20px);border-top:1px solid rgba(61,111,255,0.1);flex-shrink:0}
+@media(max-width:900px){.input-wrap{padding:16px 5%}}
+.input-inner{display:flex;align-items:center;background:rgba(17,19,32,0.9);border:1px solid rgba(61,111,255,0.25);border-radius:16px;padding:6px 6px 6px 16px;transition:border-color .2s}
+.input-inner:focus-within{border-color:rgba(61,111,255,0.6);box-shadow:0 0 0 3px rgba(61,111,255,0.1)}
+#inp{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:'Heebo',sans-serif;font-size:.92rem;direction:rtl;padding:8px 4px}
 #inp::placeholder{color:var(--muted)}
-#btn{background:linear-gradient(135deg,#8b0000,#c0392b);color:#fff;border:none;border-radius:3px;width:44px;height:44px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.1rem;transition:all .2s;flex-shrink:0;box-shadow:0 2px 12px rgba(192,57,43,0.4)}
-#btn:hover{background:linear-gradient(135deg,#a00000,#e74c3c);box-shadow:0 4px 20px rgba(192,57,43,0.6);transform:scale(1.05)}
-#btn:active{transform:scale(.95)}
-.input-hint{text-align:center;margin-top:6px;font-size:.6rem;color:var(--muted)}
+#btn{background:linear-gradient(135deg,#2a50d0,#3d6fff);color:#fff;border:none;border-radius:11px;width:44px;height:44px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.1rem;transition:all .2s;flex-shrink:0;box-shadow:0 2px 12px rgba(61,111,255,0.4)}
+#btn:hover{background:linear-gradient(135deg,#3560e0,#5585ff);transform:scale(1.05)}
+.input-hint{text-align:center;margin-top:8px;font-size:.65rem;color:var(--muted)}
 </style>
 </head>
 <body>
-
-<!-- CINEMA BACKGROUND -->
-<div class="bg">
-  <div class="grain"></div>
-  <div class="beam beam1"></div>
-  <div class="beam beam2"></div>
-  <div class="beam beam3"></div>
-  <div class="floor-glow"></div>
-  <div class="curtain-l"></div>
-  <div class="curtain-r"></div>
-  <div class="marquee-top" id="mt"></div>
-  <div class="marquee-bottom" id="mb"></div>
+<div class="bg-wrap">
+  <div class="bg-grad"></div><div class="grid"></div>
+  <div class="orb orb1"></div><div class="orb orb2"></div>
 </div>
-
 <header>
   <div class="logo-wrap">
-    <div class="logo-icon">&#127902;</div>
+    <div class="logo-icon">&#127916;</div>
     <div>
-      <div class="logo-text">CINE<span>AGENT</span></div>
+      <div class="logo-text">Cine<span>Agent</span></div>
       <div class="logo-sub">AI Movie Intelligence</div>
     </div>
   </div>
   <div class="badge"><div class="bdot"></div>פעיל</div>
 </header>
-
-<!-- SUGGESTIONS BAR -->
-<div class="suggestions-bar">
-  <div class="sug" onclick="go('קומדיה רומנטית מצחיקה')"><span class="sug-tag">חיפוש</span>קומדיה רומנטית</div>
-  <div class="sug" onclick="go('סרט אימה עם רוחות')"><span class="sug-tag">חיפוש</span>סרט אימה</div>
-  <div class="sug" onclick="go('movies similar to Inception')"><span class="sug-tag">דומה</span>דומה ל-Inception</div>
-  <div class="sug" onclick="go('סרט אקשן בנטפליקס')"><span class="sug-tag">סטרימינג</span>אקשן בנטפליקס</div>
-  <div class="sug" onclick="go('סרט אנימציה לילדים בדיסני')"><span class="sug-tag">סטרימינג</span>אנימציה בדיסני+</div>
-  <div class="sug" onclick="go('find me hidden gems with high rating')"><span class="sug-tag">חריגה</span>יהלומים נסתרים</div>
-  <div class="sug" onclick="go('סרט דרמה משנת 2010')"><span class="sug-tag">שנה</span>דרמה משנת 2010</div>
-  <div class="sug" onclick="go('what are the movie clusters')"><span class="sug-tag">קלסטרים</span>קלסטרי סרטים</div>
-</div>
-
 <div class="main">
-  <div id="messages">
-    <div class="msg bot">
-      <div class="bubble">
-        &#127916; ברוכים הבאים ל<b>CineAgent</b>!<br><br>
-        אני משלב <b>למידת מכונה</b>, <b>NLP</b> ו<b>ChatGPT AI</b> למציאת סרטים.<br>
-        מסד נתונים של <b>50,000 סרטים</b> עם מידע על Netflix, Hulu, Prime ו-Disney+.<br><br>
-        ניתן לסנן לפי <b>שנה</b> (למשל: "סרט משנת 2005") או לפי <b>פלטפורמה</b> (למשל: "סרט בנטפליקס").
-      </div>
+  <div id="welcome">
+    <div class="wicon">&#127916;</div>
+    <div class="wtitle">סינמה אייג&#x27;נט</div>
+    <div class="wsub">
+      עוזר חכם למציאת סרטים המשלב <b>למידת מכונה</b>, <b>עיבוד שפה טבעית</b> ו<b>ChatGPT AI</b>.<br>
+      מסד נתונים של <b>50,000 סרטים</b> עם מידע על פלטפורמות סטרימינג.
     </div>
+    <div class="chips">
+      <div class="chip" onclick="go('אני רוצה קומדיה רומנטית מצחיקה')"><span class="ctag">חיפוש</span>קומדיה רומנטית</div>
+      <div class="chip" onclick="go('סרט אימה עם רוחות ומסתורין')"><span class="ctag">חיפוש</span>אימה ומסתורין</div>
+      <div class="chip" onclick="go('movies similar to Inception')"><span class="ctag">דומה</span>דומה ל-Inception</div>
+      <div class="chip" onclick="go('סרט אנימציה לילדים עם קסם')"><span class="ctag">חיפוש</span>אנימציה לילדים</div>
+      <div class="chip" onclick="go('show me big budget flops')"><span class="ctag">חריגה</span>פלופים</div>
+      <div class="chip" onclick="go('find me hidden gems with high rating')"><span class="ctag">חריגה</span>יהלומים נסתרים</div>
+      <div class="chip" onclick="go('movies similar to The Dark Knight')"><span class="ctag">דומה</span>דומה ל-Dark Knight</div>
+      <div class="chip" onclick="go('what are the movie clusters')"><span class="ctag">קלסטרים</span>הצג קלסטרים</div>
+    </div>
+  </div>
+  <div id="chat-screen">
+    <div id="messages"></div>
   </div>
   <div class="input-wrap">
     <div class="input-inner">
-      <input id="inp" type="text" placeholder="חפש סרט, תאר מצב רוח, או בקש המלצה..." autocomplete="off" />
-      <button id="btn">&#x25B6;</button>
+      <input id="inp" type="text" placeholder="שאל על סרט, תאר מצב רוח, או בקש המלצה..." autocomplete="off" />
+      <button id="btn">&#x2191;</button>
     </div>
     <div class="input-hint">Enter &#x21B5; לשליחה</div>
   </div>
 </div>
-
 <script>
-// Generate marquee dots
-var mt=document.getElementById('mt'), mb=document.getElementById('mb');
-for(var i=0;i<60;i++){
-  var d1=document.createElement('div'); d1.className='mdot';
-  d1.style.animationDelay=(i*0.15)+'s'; mt.appendChild(d1);
-  var d2=document.createElement('div'); d2.className='mdot';
-  d2.style.animationDelay=(i*0.15+0.5)+'s'; mb.appendChild(d2);
-}
-
 var M=document.getElementById('messages'),I=document.getElementById('inp'),B=document.getElementById('btn');
-
-function rc(r){return r>=7.5?'#2ecc71':r>=6?'#f39c12':'#e74c3c';}
-
+var WEL=document.getElementById('welcome'),CS=document.getElementById('chat-screen'),started=false;
+function showChat(){if(!started){started=true;WEL.style.display='none';CS.classList.add('active');}}
+function rc(r){return r>=7.5?'#3de0a0':r>=6?'#e8b84b':'#e85050';}
 function streamBadges(s){
   if(!s)return '';
-  var h='',parts=s.split(', ');
+  var h='';
+  var parts=s.split(', ');
   for(var i=0;i<parts.length;i++){
     var p=parts[i].trim();
     if(p==='Netflix')h+='<span class="sp sp-netflix">Netflix</span>';
@@ -674,19 +576,18 @@ function streamBadges(s){
   }
   return h?'<div class="cstream">'+h+'</div>':'';
 }
-
 function addMsg(role,html){
+  showChat();
   var d=document.createElement('div');d.className='msg '+role;d.innerHTML=html;
   M.appendChild(d);M.scrollTop=M.scrollHeight;
 }
-
 function addTyping(){
+  showChat();
   var d=document.createElement('div');d.className='msg bot';d.id='typ';
   d.innerHTML='<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
   M.appendChild(d);M.scrollTop=M.scrollHeight;
 }
 function rmTyping(){var t=document.getElementById('typ');if(t)t.remove();}
-
 function buildCards(results){
   if(!results||!results.length)return '';
   var h='<div class="cards">';
@@ -702,9 +603,8 @@ function buildCards(results){
     h+='<div class="cdesc">'+r.overview+'</div>';
     h+='</div><div class="cscore">ציון<br>'+r.score+'</div></div>';
   }
-  return h+'</div>';
+  h+='</div>';return h;
 }
-
 function buildClusters(clusters){
   if(!clusters)return '';
   var h='<div class="clusters">';
@@ -715,7 +615,6 @@ function buildClusters(clusters){
   }
   return h+'</div>';
 }
-
 function send(){
   var text=I.value.trim();if(!text)return;
   addMsg('user','<div class="bubble">'+text+'</div>');
@@ -735,7 +634,6 @@ function send(){
   })
   .catch(function(e){rmTyping();addMsg('bot','<div class="bubble">משהו השתבש. נסה שוב.</div>');});
 }
-
 function go(q){I.value=q;send();}
 B.onclick=function(){send();};
 I.onkeydown=function(e){if(e.key==='Enter')send();};
