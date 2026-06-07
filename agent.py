@@ -424,219 +424,113 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CineAgent</title>
+<title>Movie Chatbot</title>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
-:root{
-  --bg:#060914;--surface:#0b0d1a;--card:#111320;--border:#1e2140;
-  --gold:#e8b84b;--gold2:#f5d07a;--text:#dde2ff;--muted:#4a5080;
-  --accent:#3d6fff;--green:#3de0a0;--ai:#0e1128;
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  direction:rtl;font-family:'Heebo',Arial,sans-serif;color:#2f2f38;min-height:100vh;
+  background:
+    linear-gradient(rgba(255,255,255,.38),rgba(255,255,255,.45)),
+    radial-gradient(circle at 15% 20%,rgba(255,210,95,.55),transparent 22%),
+    radial-gradient(circle at 80% 10%,rgba(238,64,95,.32),transparent 24%),
+    linear-gradient(135deg,#141821 0%,#33354b 45%,#0f1118 100%);
+  background-attachment:fixed;
 }
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%}
-body{background:var(--bg);color:var(--text);font-family:'Heebo',sans-serif;font-weight:300;direction:rtl;overflow:hidden;display:flex;flex-direction:column;}
-.bg-wrap{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
-.bg-grad{position:absolute;inset:0;background:radial-gradient(ellipse 70% 50% at 50% -10%,rgba(61,111,255,0.18) 0%,transparent 60%),radial-gradient(ellipse 40% 40% at 85% 80%,rgba(232,184,75,0.07) 0%,transparent 55%)}
-.grid{position:absolute;inset:0;background-image:linear-gradient(rgba(61,111,255,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(61,111,255,0.04) 1px,transparent 1px);background-size:60px 60px}
-.orb{position:absolute;border-radius:50%;filter:blur(80px);animation:float 8s ease-in-out infinite}
-.orb1{width:400px;height:400px;background:rgba(61,111,255,0.08);top:-100px;left:50%;transform:translateX(-50%)}
-.orb2{width:300px;height:300px;background:rgba(232,184,75,0.05);bottom:100px;right:10%;animation-delay:3s}
-@keyframes float{0%,100%{transform:translateY(0) translateX(-50%)}50%{transform:translateY(-30px) translateX(-50%)}}
-header{position:relative;z-index:10;display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid rgba(61,111,255,0.15);background:rgba(6,9,20,0.8);backdrop-filter:blur(20px);flex-shrink:0}
-.logo-wrap{display:flex;align-items:center;gap:14px}
-.logo-icon{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#1a2a6c,#3d6fff);border:1px solid rgba(61,111,255,0.4);display:flex;align-items:center;justify-content:center;font-size:1.2rem;box-shadow:0 0 20px rgba(61,111,255,0.3)}
-.logo-text{font-size:1.3rem;font-weight:900;color:var(--text);letter-spacing:1px}
-.logo-text span{color:var(--gold)}
-.logo-sub{font-size:.65rem;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:1px}
-.badge{display:flex;align-items:center;gap:6px;background:rgba(61,224,160,0.08);border:1px solid rgba(61,224,160,0.2);border-radius:20px;padding:5px 14px;font-size:.68rem;color:var(--green);font-weight:500}
-.bdot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-.main{position:relative;z-index:5;flex:1;display:flex;flex-direction:column;overflow:hidden}
-#welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;text-align:center;gap:28px}
-.wicon{width:90px;height:90px;border-radius:24px;background:linear-gradient(135deg,#0d1a4a,#1a3a8f);border:1px solid rgba(61,111,255,0.35);display:flex;align-items:center;justify-content:center;font-size:2.5rem;box-shadow:0 0 60px rgba(61,111,255,0.25)}
-.wtitle{font-size:clamp(2rem,5vw,3.2rem);font-weight:900;background:linear-gradient(135deg,#dde2ff 0%,#e8b84b 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1}
-.wsub{font-size:.95rem;color:var(--muted);line-height:1.8;max-width:520px}
-.wsub b{color:var(--text);font-weight:500}
-.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:640px}
-.chip{background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:24px;padding:8px 16px;font-size:.78rem;color:var(--muted);cursor:pointer;transition:all .2s;white-space:nowrap}
-.chip:hover{border-color:var(--accent);color:var(--text);background:rgba(61,111,255,0.08)}
-.ctag{color:var(--gold);font-weight:700;margin-left:4px;font-size:.65rem}
-#chat-screen{flex:1;display:none;flex-direction:column;overflow:hidden}
-#chat-screen.active{display:flex}
-#messages{flex:1;overflow-y:auto;padding:24px 20%;display:flex;flex-direction:column;gap:20px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
-@media(max-width:900px){#messages{padding:20px 5%}}
-.msg{display:flex;flex-direction:column;gap:8px;animation:msgIn .3s ease}
-@keyframes msgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-.msg.user{align-items:flex-start}.msg.bot{align-items:flex-end}
-.bubble{max-width:600px;padding:13px 18px;border-radius:18px;font-size:.9rem;line-height:1.7}
-.msg.user .bubble{background:linear-gradient(135deg,#1a3080,#3d6fff);color:#fff;border-bottom-left-radius:4px;box-shadow:0 4px 20px rgba(61,111,255,0.3)}
-.msg.bot .bubble{background:var(--card);border:1px solid var(--border);border-bottom-right-radius:4px}
-.bubble b{color:var(--gold)}
-.ai-box{max-width:600px;padding:16px 18px;border-radius:18px;border-bottom-right-radius:4px;background:var(--ai);border:1px solid rgba(232,184,75,0.2);font-size:.87rem;line-height:1.75;color:#b8c0e8;position:relative;overflow:hidden}
-.ai-box::before{content:'';position:absolute;top:0;right:0;left:0;height:1px;background:linear-gradient(90deg,transparent,rgba(232,184,75,0.4),transparent)}
-.ai-tag{font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-bottom:10px;font-weight:700;display:flex;align-items:center;gap:6px}
-.ai-tag::before{content:"✦";font-size:.75rem}
-.cards{display:flex;flex-direction:column;gap:10px;width:100%;max-width:600px}
-.card{background:rgba(17,19,32,0.8);border:1px solid var(--border);border-radius:14px;padding:14px 16px;display:flex;gap:14px;transition:all .2s}
-.card:hover{border-color:rgba(61,111,255,0.4);transform:translateX(4px);box-shadow:0 4px 24px rgba(61,111,255,0.1)}
-.cnum{font-size:1.8rem;font-weight:900;color:var(--border);line-height:1;min-width:28px;text-align:center;transition:color .2s}
-.card:hover .cnum{color:var(--gold)}
-.cbody{flex:1;min-width:0}
-.ctitle{font-size:.92rem;font-weight:700;margin-bottom:4px;color:var(--text)}
-.cmeta{font-size:.68rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:5px;align-items:center}
-.cgenres{font-size:.68rem;color:var(--gold);margin-bottom:4px;font-weight:500}
-.cstream{font-size:.65rem;margin-bottom:5px}
-.sp{display:inline-block;padding:2px 7px;border-radius:10px;margin-left:3px;font-weight:600}
-.sp-netflix{background:rgba(229,9,20,0.2);color:#e55;border:1px solid rgba(229,9,20,0.3)}
-.sp-hulu{background:rgba(28,231,131,0.15);color:#1ce783;border:1px solid rgba(28,231,131,0.3)}
-.sp-prime{background:rgba(0,168,225,0.15);color:#00a8e1;border:1px solid rgba(0,168,225,0.3)}
-.sp-disney{background:rgba(17,60,219,0.2);color:#5577ff;border:1px solid rgba(17,60,219,0.3)}
-.cdesc{font-size:.75rem;color:#5a6090;line-height:1.55}
-.cscore{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;white-space:nowrap;text-align:center}
-.rdot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:3px}
-.clusters{display:flex;flex-wrap:wrap;gap:8px;max-width:600px}
-.clu{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;flex:1;min-width:150px}
-.clu-name{font-size:.85rem;font-weight:700;color:var(--gold);margin-bottom:6px}
-.clu-stat{font-size:.7rem;color:var(--muted);line-height:1.8}
-.typing{display:flex;gap:5px;padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:18px;border-bottom-right-radius:4px;width:fit-content}
-.dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:b 1.2s infinite}
-.dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
-@keyframes b{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px);background:var(--gold)}}
-.input-wrap{position:relative;z-index:10;padding:20px 20%;background:rgba(6,9,20,0.7);backdrop-filter:blur(20px);border-top:1px solid rgba(61,111,255,0.1);flex-shrink:0}
-@media(max-width:900px){.input-wrap{padding:16px 5%}}
-.input-inner{display:flex;align-items:center;background:rgba(17,19,32,0.9);border:1px solid rgba(61,111,255,0.25);border-radius:16px;padding:6px 6px 6px 16px;transition:border-color .2s}
-.input-inner:focus-within{border-color:rgba(61,111,255,0.6);box-shadow:0 0 0 3px rgba(61,111,255,0.1)}
-#inp{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:'Heebo',sans-serif;font-size:.92rem;direction:rtl;padding:8px 4px}
-#inp::placeholder{color:var(--muted)}
-#btn{background:linear-gradient(135deg,#2a50d0,#3d6fff);color:#fff;border:none;border-radius:11px;width:44px;height:44px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1.1rem;transition:all .2s;flex-shrink:0;box-shadow:0 2px 12px rgba(61,111,255,0.4)}
-#btn:hover{background:linear-gradient(135deg,#3560e0,#5585ff);transform:scale(1.05)}
-.input-hint{text-align:center;margin-top:8px;font-size:.65rem;color:var(--muted)}
+body:before{
+  content:"";position:fixed;inset:80px 0 0 0;z-index:-1;opacity:.34;
+  background-image:
+    linear-gradient(120deg,rgba(0,0,0,.65),rgba(0,0,0,.1)),
+    url('https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1800&q=80');
+  background-size:cover;background-position:center;
+}
+.topbar{
+  height:80px;background:rgba(255,255,255,.96);display:flex;align-items:center;justify-content:space-between;
+  padding:0 42px;box-shadow:0 2px 16px rgba(0,0,0,.12);position:sticky;top:0;z-index:10
+}
+.brand{font-size:31px;font-weight:900;letter-spacing:.3px;color:#303038;display:flex;gap:10px;align-items:center}
+.brand .icon{font-size:31px}.status{font-size:16px;font-weight:700;color:#777;background:#f4f4f8;border-radius:999px;padding:8px 16px}
+.hero{text-align:center;padding:34px 18px 30px;background:rgba(255,255,255,.72);backdrop-filter:blur(3px)}
+.hero h1{font-size:clamp(38px,5vw,68px);line-height:1.05;font-weight:900;color:#303038;text-shadow:0 2px 0 rgba(255,255,255,.7)}
+.hero p{font-size:clamp(20px,2.2vw,30px);margin-top:22px;color:#464653;font-weight:400}
+.intro-card{
+  width:min(1400px,86vw);margin:46px auto 30px;background:rgba(255,255,255,.88);border-radius:22px;
+  padding:58px 64px;box-shadow:0 12px 38px rgba(20,20,30,.14);backdrop-filter:blur(5px)
+}
+.intro-card h2{font-size:30px;margin-bottom:28px;color:#2f2f38;font-weight:900}
+.intro-card p{font-size:24px;line-height:1.9;color:#444450}.gift{margin-left:12px}
+.start-btn{margin-top:32px;background:#ef3d7a;color:#fff;border:0;border-radius:38px;padding:20px 46px;font-size:25px;font-weight:900;cursor:pointer;box-shadow:0 8px 24px rgba(239,61,122,.25);transition:.2s}
+.start-btn:hover{transform:translateY(-2px);background:#e32969}
+.examples{margin-top:44px}.examples h3{font-size:27px;font-weight:900;margin-bottom:20px}
+.examples ul{font-size:23px;line-height:2.1;padding-right:25px}.examples li{padding-right:8px}.examples span{margin-left:10px}
+.chat-shell{width:min(1350px,86vw);margin:34px auto 80px;background:rgba(255,255,255,.96);border-radius:20px;box-shadow:0 12px 38px rgba(20,20,30,.15);overflow:hidden;min-height:650px}
+.chat-head{height:76px;display:flex;align-items:center;justify-content:space-between;padding:0 30px;border-bottom:1px solid #eee;font-size:22px;font-weight:900;color:#0f0f12;background:#fff}
+.dots{letter-spacing:3px;color:#777}.messages{height:470px;overflow-y:auto;padding:34px 42px;display:flex;flex-direction:column;gap:24px;background:rgba(255,255,255,.72)}
+.msg{display:flex;flex-direction:column;max-width:78%;animation:in .22s ease}.msg.user{align-self:flex-start}.msg.bot{align-self:flex-end}
+.bubble{font-size:22px;line-height:1.7;border-radius:27px;padding:20px 28px;white-space:pre-wrap}
+.user .bubble{background:#3f7df0;color:white;border-bottom-left-radius:8px;font-weight:700}
+.bot .bubble{background:#f0f0f3;color:#2e2e38;border-bottom-right-radius:8px}.time{font-size:15px;color:#8a8a92;margin-top:8px}
+.cards{display:flex;flex-direction:column;gap:12px;margin-top:12px}.movie-card{background:#fff;border:1px solid #eee;border-radius:18px;padding:16px 20px;box-shadow:0 4px 18px rgba(0,0,0,.05)}
+.movie-title{font-size:21px;font-weight:900;color:#222;margin-bottom:6px}.movie-meta{font-size:16px;color:#6c6c75;margin-bottom:5px}.movie-genres{font-size:16px;color:#e33d75;font-weight:800;margin-bottom:6px}.movie-desc{font-size:16px;line-height:1.55;color:#555}
+.clusters{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:12px}.cluster{background:#fff;border:1px solid #eee;border-radius:16px;padding:16px}.cluster b{color:#e33d75}
+.input-zone{display:flex;gap:12px;align-items:center;padding:22px 30px;border-top:1px solid #eee;background:#fff}
+#inp{flex:1;border:1px solid #e1e1e7;border-radius:28px;padding:18px 24px;font-size:20px;font-family:inherit;outline:none;background:#fafafa}
+#inp:focus{border-color:#ef3d7a;box-shadow:0 0 0 4px rgba(239,61,122,.08)}
+#btn{border:0;background:#ef3d7a;color:#fff;border-radius:28px;padding:17px 31px;font-size:20px;font-weight:900;cursor:pointer}#btn:hover{background:#e32969}
+.quick{display:flex;flex-wrap:wrap;gap:10px;padding:0 30px 24px;background:#fff}.chip{border:1px solid #eee;background:#f8f8fb;border-radius:999px;padding:10px 16px;font-size:16px;cursor:pointer}.chip:hover{border-color:#ef3d7a;color:#ef3d7a}
+@keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media(max-width:760px){.topbar{padding:0 18px}.status{display:none}.intro-card,.chat-shell{width:94vw}.intro-card{padding:32px 24px}.messages{height:430px;padding:24px 18px}.msg{max-width:94%}.bubble{font-size:18px}.hero h1{font-size:42px}.hero p,.intro-card p,.examples ul{font-size:19px}}
 </style>
 </head>
 <body>
-<div class="bg-wrap">
-  <div class="bg-grad"></div><div class="grid"></div>
-  <div class="orb orb1"></div><div class="orb orb2"></div>
-</div>
-<header>
-  <div class="logo-wrap">
-    <div class="logo-icon">&#127916;</div>
-    <div>
-      <div class="logo-text">Cine<span>Agent</span></div>
-      <div class="logo-sub">AI Movie Intelligence</div>
-    </div>
-  </div>
-  <div class="badge"><div class="bdot"></div>פעיל</div>
+<header class="topbar">
+  <div class="brand"><span class="icon">🎬</span> צ׳אטבוט סרטים</div>
+  <div class="status">מבוסס AI + 50,000 סרטים</div>
 </header>
-<div class="main">
-  <div id="welcome">
-    <div class="wicon">&#127916;</div>
-    <div class="wtitle">סינמה אייג&#x27;נט</div>
-    <div class="wsub">
-      עוזר חכם למציאת סרטים המשלב <b>למידת מכונה</b>, <b>עיבוד שפה טבעית</b> ו<b>ChatGPT AI</b>.<br>
-      מסד נתונים של <b>50,000 סרטים</b> עם מידע על פלטפורמות סטרימינג.
-    </div>
-    <div class="chips">
-      <div class="chip" onclick="go('אני רוצה קומדיה רומנטית מצחיקה')"><span class="ctag">חיפוש</span>קומדיה רומנטית</div>
-      <div class="chip" onclick="go('סרט אימה עם רוחות ומסתורין')"><span class="ctag">חיפוש</span>אימה ומסתורין</div>
-      <div class="chip" onclick="go('movies similar to Inception')"><span class="ctag">דומה</span>דומה ל-Inception</div>
-      <div class="chip" onclick="go('סרט אנימציה לילדים עם קסם')"><span class="ctag">חיפוש</span>אנימציה לילדים</div>
-      <div class="chip" onclick="go('show me big budget flops')"><span class="ctag">חריגה</span>פלופים</div>
-      <div class="chip" onclick="go('find me hidden gems with high rating')"><span class="ctag">חריגה</span>יהלומים נסתרים</div>
-      <div class="chip" onclick="go('movies similar to The Dark Knight')"><span class="ctag">דומה</span>דומה ל-Dark Knight</div>
-      <div class="chip" onclick="go('what are the movie clusters')"><span class="ctag">קלסטרים</span>הצג קלסטרים</div>
-    </div>
+<section class="hero">
+  <h1>מחפשים את הסרט המושלם? 🍿</h1>
+  <p>הבוט שלנו יענה על כל שאלה על סרטים, המלצות, ז׳אנרים וסרטים דומים</p>
+</section>
+<section class="intro-card">
+  <h2>איך אפשר לעזור לכם היום?</h2>
+  <p><span class="gift">🎁</span>הבוט יודע להתאים סרט לכל מצב רוח, למצוא סרטים דומים, לזהות חריגות מעניינות בדאטה, ולהציג קבוצות סרטים שנמצאו בעזרת למידת מכונה.</p>
+  <button class="start-btn" onclick="document.getElementById('chat').scrollIntoView({behavior:'smooth'})">התחילו לדבר עם הבוט</button>
+  <div class="examples">
+    <h3>דוגמאות לשאלות שתוכלו לשאול:</h3>
+    <ul>
+      <li><span>🎭</span>אני רוצה קומדיה רומנטית מצחיקה</li>
+      <li><span>🚀</span>תמצא לי סרט מדע בדיוני כמו Inception</li>
+      <li><span>💎</span>find me hidden gems with high rating</li>
+      <li><span>📊</span>what are the movie clusters?</li>
+    </ul>
   </div>
-  <div id="chat-screen">
-    <div id="messages"></div>
+</section>
+<section class="chat-shell" id="chat">
+  <div class="chat-head"><span>movie_chatbot</span><span class="dots">•••</span></div>
+  <div class="messages" id="messages">
+    <div class="msg bot"><div class="bubble">ברוכים הבאים לצ׳אטבוט הסרטים! 🌟\nאני כאן כדי לעזור לכם לבחור סרט לפי מצב רוח, ז׳אנר, סרט דומה או חריגות מעניינות. כתבו לי מה אתם מחפשים — ואני אמצא לכם המלצה מדויקת.</div></div>
   </div>
-  <div class="input-wrap">
-    <div class="input-inner">
-      <input id="inp" type="text" placeholder="שאל על סרט, תאר מצב רוח, או בקש המלצה..." autocomplete="off" />
-      <button id="btn">&#x2191;</button>
-    </div>
-    <div class="input-hint">Enter &#x21B5; לשליחה</div>
+  <div class="input-zone">
+    <input id="inp" placeholder="כתבו כאן שאלה על סרטים..." autocomplete="off">
+    <button id="btn">שליחה</button>
   </div>
-</div>
+  <div class="quick">
+    <button class="chip" onclick="go('אני רוצה קומדיה רומנטית מצחיקה')">קומדיה רומנטית</button>
+    <button class="chip" onclick="go('movies similar to Inception')">דומה ל־Inception</button>
+    <button class="chip" onclick="go('show me big budget flops')">פלופים</button>
+    <button class="chip" onclick="go('what are the movie clusters')">קלסטרים</button>
+  </div>
+</section>
 <script>
-var M=document.getElementById('messages'),I=document.getElementById('inp'),B=document.getElementById('btn');
-var WEL=document.getElementById('welcome'),CS=document.getElementById('chat-screen'),started=false;
-function showChat(){if(!started){started=true;WEL.style.display='none';CS.classList.add('active');}}
-function rc(r){return r>=7.5?'#3de0a0':r>=6?'#e8b84b':'#e85050';}
-function streamBadges(s){
-  if(!s)return '';
-  var h='';
-  var parts=s.split(', ');
-  for(var i=0;i<parts.length;i++){
-    var p=parts[i].trim();
-    if(p==='Netflix')h+='<span class="sp sp-netflix">Netflix</span>';
-    else if(p==='Hulu')h+='<span class="sp sp-hulu">Hulu</span>';
-    else if(p==='Prime')h+='<span class="sp sp-prime">Prime</span>';
-    else if(p==='Disney+')h+='<span class="sp sp-disney">Disney+</span>';
-  }
-  return h?'<div class="cstream">'+h+'</div>':'';
-}
-function addMsg(role,html){
-  showChat();
-  var d=document.createElement('div');d.className='msg '+role;d.innerHTML=html;
-  M.appendChild(d);M.scrollTop=M.scrollHeight;
-}
-function addTyping(){
-  showChat();
-  var d=document.createElement('div');d.className='msg bot';d.id='typ';
-  d.innerHTML='<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
-  M.appendChild(d);M.scrollTop=M.scrollHeight;
-}
-function rmTyping(){var t=document.getElementById('typ');if(t)t.remove();}
-function buildCards(results){
-  if(!results||!results.length)return '';
-  var h='<div class="cards">';
-  for(var i=0;i<results.length;i++){
-    var r=results[i];
-    h+='<div class="card">';
-    h+='<div class="cnum">'+r.rank+'</div>';
-    h+='<div class="cbody">';
-    h+='<div class="ctitle">'+r.title+'</div>';
-    h+='<div class="cmeta"><span>'+r.year+'</span><span><span class="rdot" style="background:'+rc(r.rating)+'"></span>'+r.rating+'/10</span></div>';
-    h+='<div class="cgenres">'+r.genres+'</div>';
-    h+=streamBadges(r.streaming);
-    h+='<div class="cdesc">'+r.overview+'</div>';
-    h+='</div><div class="cscore">ציון<br>'+r.score+'</div></div>';
-  }
-  h+='</div>';return h;
-}
-function buildClusters(clusters){
-  if(!clusters)return '';
-  var h='<div class="clusters">';
-  for(var i=0;i<clusters.length;i++){
-    var c=clusters[i];
-    h+='<div class="clu"><div class="clu-name">'+c.name+'</div>';
-    h+='<div class="clu-stat">'+c.count+' סרטים | ממוצע: '+c.avg_rating+'<br>'+c.top_genres+'</div></div>';
-  }
-  return h+'</div>';
-}
-function send(){
-  var text=I.value.trim();if(!text)return;
-  addMsg('user','<div class="bubble">'+text+'</div>');
-  I.value='';addTyping();
-  fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})})
-  .then(function(r){return r.json();})
-  .then(function(data){
-    rmTyping();
-    var extra=data.intent==='cluster_info'?buildClusters(data.clusters):buildCards(data.results);
-    addMsg('bot','<div class="bubble">'+data.reply+'</div>'+extra);
-    if(data.claude_reply){
-      setTimeout(function(){
-        addMsg('bot','<div class="ai-box"><div class="ai-tag">ChatGPT AI</div>'+data.claude_reply+'</div>');
-        M.scrollTop=M.scrollHeight;
-      },300);
-    }
-  })
-  .catch(function(e){rmTyping();addMsg('bot','<div class="bubble">משהו השתבש. נסה שוב.</div>');});
-}
-function go(q){I.value=q;send();}
-B.onclick=function(){send();};
-I.onkeydown=function(e){if(e.key==='Enter')send();};
+const M=document.getElementById('messages'), I=document.getElementById('inp'), B=document.getElementById('btn');
+function esc(s){return String(s||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+function addMsg(role,html){const d=document.createElement('div');d.className='msg '+role;d.innerHTML=html;M.appendChild(d);M.scrollTop=M.scrollHeight;}
+function cards(results){if(!results||!results.length)return '';let h='<div class="cards">';results.forEach(r=>{h+=`<div class="movie-card"><div class="movie-title">${esc(r.rank)}. ${esc(r.title)}</div><div class="movie-meta">${esc(r.year)} | דירוג ${esc(r.rating)}/10 | ציון התאמה ${esc(r.score)}</div><div class="movie-genres">${esc(r.genres)}</div>${r.streaming?`<div class="movie-meta">זמין ב: ${esc(r.streaming)}</div>`:''}<div class="movie-desc">${esc(r.overview)}</div></div>`});return h+'</div>';}
+function clusters(cs){if(!cs)return '';let h='<div class="clusters">';cs.forEach(c=>{h+=`<div class="cluster"><b>${esc(c.name)}</b><br>${esc(c.count)} סרטים<br>דירוג ממוצע: ${esc(c.avg_rating)}<br>${esc(c.top_genres)}</div>`});return h+'</div>';}
+function send(){let text=I.value.trim();if(!text)return;addMsg('user',`<div class="bubble">${esc(text)}</div>`);I.value='';addMsg('bot','<div class="bubble">חושבת על המלצה טובה... 🍿</div>');let loading=M.lastChild;fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})}).then(r=>r.json()).then(data=>{loading.remove();let extra=data.intent==='cluster_info'?clusters(data.clusters):cards(data.results);addMsg('bot',`<div class="bubble">${esc(data.reply)}</div>${extra}`);if(data.claude_reply){addMsg('bot',`<div class="bubble">${esc(data.claude_reply)}</div>`);}}).catch(()=>{loading.remove();addMsg('bot','<div class="bubble">משהו השתבש, נסו שוב בעוד רגע.</div>');});}
+function go(q){I.value=q;document.getElementById('chat').scrollIntoView({behavior:'smooth'});send();}
+B.onclick=send;I.addEventListener('keydown',e=>{if(e.key==='Enter')send();});
 </script>
 </body>
 </html>"""
