@@ -11,63 +11,88 @@ from sklearn.cluster import MiniBatchKMeans
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.ensemble import IsolationForest
-from scipy.sparse import hstack, csr_matrix
 
 app = Flask(__name__)
 
 # ==============================================================
-# 1. LOAD & PREPARE DATA
+# 1. LOAD & PREPARE DATA - memory optimized for Render Free
 # ==============================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(BASE_DIR, "data", "movies_master.csv")
 
-df = pd.read_csv(DATA_PATH)
+# Read only the columns the agent actually uses. This is the biggest memory saver
+# when the CSV contains credits/cast/crew or other large columns.
+NEEDED_COLUMNS = {
+    "title", "overview", "genres", "keywords", "available_on",
+    "vote_average", "popularity", "runtime", "vote_count", "release_year",
+    "Netflix", "Hulu", "Prime Video", "Disney+"
+}
 
-df["overview"]      = df["overview"].fillna("")
-df["genres"]        = df["genres"].fillna("")
-df["keywords"]      = df["keywords"].fillna("")
-df["available_on"]  = df["available_on"].fillna("לא זמין בסטרימינג")
-df["vote_average"]  = df["vote_average"].fillna(0)
-df["popularity"]    = df["popularity"].fillna(0)
-df["runtime"]       = df["runtime"].fillna(0)
-df["vote_count"]    = df["vote_count"].fillna(0)
-df["release_year"]  = df["release_year"].fillna(0)
+df = pd.read_csv(
+    DATA_PATH,
+    usecols=lambda c: c in NEEDED_COLUMNS,
+    nrows=50000,
+    low_memory=False
+)
 
-# Streaming flags
+# Make sure optional columns exist even if the CSV does not include them.
+for col in NEEDED_COLUMNS:
+    if col not in df.columns:
+        df[col] = 0 if col in ["vote_average", "popularity", "runtime", "vote_count", "release_year", "Netflix", "Hulu", "Prime Video", "Disney+"] else ""
+
+df = df.reset_index(drop=True)
+
+# Text columns
+df["title"] = df["title"].fillna("").astype(str)
+df["overview"] = df["overview"].fillna("").astype(str)
+df["genres"] = df["genres"].fillna("").astype(str)
+df["keywords"] = df["keywords"].fillna("").astype(str)
+df["available_on"] = df["available_on"].fillna("לא זמין בסטרימינג").astype(str)
+
+# Numeric columns - float32/int32 save memory compared with defaults
+for col in ["vote_average", "popularity", "runtime", "vote_count", "release_year"]:
+    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("float32")
+
 for col in ["Netflix", "Hulu", "Prime Video", "Disney+"]:
-    if col in df.columns:
-        df[col] = df[col].fillna(0).astype(int)
+    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int8")
 
 # ==============================================================
-# 2. CLUSTERING
+# 2. CLUSTERING - sparse matrix, no toarray()
 # ==============================================================
+
+from scipy.sparse import hstack, csr_matrix
 
 numeric_features = ["vote_average", "popularity", "runtime", "vote_count"]
 scaler = MinMaxScaler()
-numeric_scaled = pd.DataFrame(
-    scaler.fit_transform(df[numeric_features]),
-    columns=numeric_features
-)
+numeric_scaled = scaler.fit_transform(df[numeric_features]).astype("float32")
+numeric_sparse = csr_matrix(numeric_scaled)
 
 def vectorize_column(col, max_features=None):
     vec = CountVectorizer(
         tokenizer=lambda x: [i.strip() for i in str(x).split(",") if i.strip()],
         token_pattern=None,
         binary=True,
-        max_features=max_features
+        max_features=max_features,
+        dtype=np.int8
     )
     return vec.fit_transform(df[col].astype(str))
 
-genres_vec = vectorize_column("genres")
-keywords_vec = vectorize_column("keywords", max_features=50)
-
-# Keep feature matrices sparse to support 50,000 movies on Render Free memory.
-numeric_sparse = csr_matrix(numeric_scaled.values)
+genres_vec = vectorize_column("genres", max_features=40)
+keywords_vec = vectorize_column("keywords", max_features=30)
 cluster_data = hstack([numeric_sparse, genres_vec, keywords_vec]).tocsr()
 
-kmeans = MiniBatchKMeans(n_clusters=5, random_state=42, n_init=3)
-df["cluster"] = kmeans.fit_predict(cluster_data)
+kmeans = MiniBatchKMeans(
+    n_clusters=5,
+    random_state=42,
+    n_init=1,
+    batch_size=1024,
+    max_iter=40
+)
+df["cluster"] = kmeans.fit_predict(cluster_data).astype("int8")
+
+# Free memory we no longer need for startup.
+del cluster_data
 
 CLUSTER_NAMES = {
     0: "דרמה / פשע / היסטוריה",
@@ -78,36 +103,50 @@ CLUSTER_NAMES = {
 }
 
 # ==============================================================
-# 3. TF-IDF ON OVERVIEWS
+# 3. TF-IDF ON OVERVIEWS - sparse and smaller vocabulary
 # ==============================================================
 
 def clean_text(text):
-    text = text.lower()
-    text = re.sub(r"[^a-z\s]", "", text)
+    text = str(text).lower()
+    text = re.sub(r"[^a-z\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
-df["overview_clean"] = df["overview"].apply(clean_text)
-tfidf = TfidfVectorizer(stop_words="english", max_features=3000, ngram_range=(1, 2))
-tfidf_matrix = tfidf.fit_transform(df["overview_clean"])
+# Do not store another large text column in df; use a temporary Series/list only.
+overview_clean = df["overview"].map(clean_text)
+tfidf = TfidfVectorizer(
+    stop_words="english",
+    max_features=1800,
+    ngram_range=(1, 1),
+    dtype=np.float32
+)
+tfidf_matrix = tfidf.fit_transform(overview_clean)
+del overview_clean
 
 # ==============================================================
-# 4. SIMILARITY DATA (no full matrix — too large for 50k movies)
+# 4. SIMILARITY DATA - sparse only, no full similarity matrix
 # ==============================================================
 
-# Reuse the sparse feature matrix. Do not build a dense 50k x features DataFrame.
 sim_data_sparse = hstack([numeric_sparse, genres_vec, keywords_vec]).tocsr()
 
 # ==============================================================
-# 5. ANOMALY DETECTION
+# 5. ANOMALY DETECTION - lighter IsolationForest
 # ==============================================================
 
 iso_features = ["popularity", "vote_average", "vote_count", "runtime"]
-iso_data = df[iso_features].fillna(0)
+iso_data = df[iso_features].to_numpy(dtype=np.float32)
 iso_scaler = MinMaxScaler()
-iso_scaled = iso_scaler.fit_transform(iso_data)
-iso = IsolationForest(n_estimators=25, contamination=0.05, random_state=42)
-df["anomaly"]       = iso.fit_predict(iso_scaled)
-df["anomaly_score"] = iso.decision_function(iso_scaled)
+iso_scaled = iso_scaler.fit_transform(iso_data).astype("float32")
+
+iso = IsolationForest(
+    n_estimators=15,
+    contamination=0.05,
+    random_state=42,
+    max_samples=2048
+)
+df["anomaly"] = iso.fit_predict(iso_scaled).astype("int8")
+df["anomaly_score"] = iso.decision_function(iso_scaled).astype("float32")
+
+del iso_data, iso_scaled, iso
 
 # ==============================================================
 # 6. GENRE KEYWORD MAP
