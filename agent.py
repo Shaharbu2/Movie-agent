@@ -143,7 +143,11 @@ cluster_data = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr")
 
 kmeans = MiniBatchKMeans(n_clusters=5, random_state=42, n_init=2, batch_size=2048)
 df["cluster"] = kmeans.fit_predict(cluster_data).astype(np.int8)
-del cluster_data, numeric_scaled, numeric_sparse  # free after clustering
+
+# Build sim_data BEFORE freeing numeric_sparse
+sim_data_sparse = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr")
+
+del cluster_data, numeric_scaled, numeric_sparse, genres_vec, keywords_vec
 gc.collect()
 
 CLUSTER_NAMES = {
@@ -162,9 +166,6 @@ overview_clean_list = [clean_text(x) for x in df["overview"].tolist()]
 tfidf = TfidfVectorizer(stop_words="english", max_features=800, ngram_range=(1, 2), dtype=np.float32)
 tfidf_matrix = tfidf.fit_transform(overview_clean_list)
 del overview_clean_list  # free the list immediately after fitting
-
-# Similarity features for "similar to"
-sim_data_sparse = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr")
 
 # ==============================================================
 # 5. ANOMALY DETECTION - light
