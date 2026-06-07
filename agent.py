@@ -1,5 +1,6 @@
 import os
 import re
+import gc
 import json
 import difflib
 import numpy as np
@@ -31,7 +32,15 @@ NEEDED_COLUMNS = [
 
 header_cols = pd.read_csv(DATA_PATH, nrows=0).columns.tolist()
 usecols = [c for c in NEEDED_COLUMNS if c in header_cols]
-df = pd.read_csv(DATA_PATH, usecols=usecols, nrows=50000)
+dtype_map = {
+    "vote_average": np.float32, "popularity": np.float32,
+    "runtime": np.float32, "vote_count": np.float32,
+    "release_year": np.float32,
+    "Netflix": np.int8, "Hulu": np.int8,
+    "Prime Video": np.int8, "Disney+": np.int8,
+}
+usable_dtypes = {k: v for k, v in dtype_map.items() if k in header_cols}
+df = pd.read_csv(DATA_PATH, usecols=usecols, nrows=20000, dtype=usable_dtypes)
 
 for col in NEEDED_COLUMNS:
     if col not in df.columns:
@@ -50,16 +59,13 @@ df["genres"] = df["genres"].fillna("").astype(str)
 df["keywords"] = df["keywords"].fillna("").astype(str)
 df["available_on"] = df["available_on"].fillna("Not available in dataset").astype(str)
 
-for c in ["vote_average", "popularity", "runtime", "vote_count", "release_year"]:
-    df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+for c in ["vote_average", "popularity", "runtime", "vote_count"]:
+    df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(np.float32)
+
+df["release_year"] = pd.to_numeric(df["release_year"], errors="coerce").fillna(0).astype(np.int16)
 
 for col in ["Netflix", "Hulu", "Prime Video", "Disney+"]:
     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(np.int8)
-
-for c in ["vote_average", "popularity", "runtime", "vote_count"]:
-    df[c] = df[c].astype(np.float32)
-
-df["release_year"] = df["release_year"].astype(np.int16)
 
 # ==============================================================
 # 2. HELPERS
@@ -130,13 +136,15 @@ scaler = MinMaxScaler()
 numeric_scaled = scaler.fit_transform(df[numeric_features]).astype(np.float32)
 numeric_sparse = csr_matrix(numeric_scaled)
 
-genres_vec = vectorize_column("genres", max_features=35)
-keywords_vec = vectorize_column("keywords", max_features=35)
+genres_vec = vectorize_column("genres", max_features=20)
+keywords_vec = vectorize_column("keywords", max_features=20)
 
 cluster_data = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr")
 
 kmeans = MiniBatchKMeans(n_clusters=5, random_state=42, n_init=2, batch_size=2048)
 df["cluster"] = kmeans.fit_predict(cluster_data).astype(np.int8)
+del cluster_data, numeric_scaled, numeric_sparse  # free after clustering
+gc.collect()
 
 CLUSTER_NAMES = {
     0: "דרמה / פשע / היסטוריה",
@@ -151,8 +159,9 @@ CLUSTER_NAMES = {
 # ==============================================================
 
 overview_clean_list = [clean_text(x) for x in df["overview"].tolist()]
-tfidf = TfidfVectorizer(stop_words="english", max_features=1500, ngram_range=(1, 2), dtype=np.float32)
+tfidf = TfidfVectorizer(stop_words="english", max_features=800, ngram_range=(1, 2), dtype=np.float32)
 tfidf_matrix = tfidf.fit_transform(overview_clean_list)
+del overview_clean_list  # free the list immediately after fitting
 
 # Similarity features for "similar to"
 sim_data_sparse = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr")
@@ -164,9 +173,10 @@ sim_data_sparse = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr
 iso_features = ["popularity", "vote_average", "vote_count", "runtime"]
 iso_scaler = MinMaxScaler()
 iso_scaled = iso_scaler.fit_transform(df[iso_features]).astype(np.float32)
-iso = IsolationForest(n_estimators=15, max_samples=4096, contamination=0.05, random_state=42)
+iso = IsolationForest(n_estimators=10, max_samples=2048, contamination=0.05, random_state=42)
 df["anomaly"] = iso.fit_predict(iso_scaled).astype(np.int8)
 df["anomaly_score"] = iso.decision_function(iso_scaled).astype(np.float32)
+del iso_scaled; gc.collect()
 
 # ==============================================================
 # 6. INTENT + FILTER DETECTION
@@ -260,17 +270,12 @@ def find_movie_title(user_text):
     """Find a movie title in user input with exact and fuzzy matching."""
     text_clean = clean_title(user_text)
 
-    # Exact containment: prefer the longest matched title
-    best_title = None
-    best_len = 0
-    for _, row in df[["title", "title_clean"]].iterrows():
-        tc = row["title_clean"]
-        if tc and tc in text_clean and len(tc) > best_len:
-            best_title = row["title"]
-            best_len = len(tc)
-
-    if best_title:
-        return best_title
+    # Vectorized exact containment: prefer longest matched title
+    mask = df["title_clean"].apply(lambda tc: bool(tc) and tc in text_clean)
+    hits = df[mask]
+    if not hits.empty:
+        best_idx = hits["title_clean"].str.len().idxmax()
+        return df.loc[best_idx, "title"]
 
     # Try extracting after common phrases
     patterns = [
@@ -489,7 +494,8 @@ def handle_similar(movie_title, user_text, top_n=3):
     idx = int(matches.index[0])
     found = df.loc[idx, "title"]
 
-    scores = cosine_similarity(sim_data_sparse[idx], sim_data_sparse).flatten()
+    # Compute similarity for just one row vs all — avoids building full NxN matrix
+    scores = cosine_similarity(sim_data_sparse[idx:idx+1], sim_data_sparse).flatten()
     scores[idx] = -1
 
     candidates = df.copy()
