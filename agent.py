@@ -385,19 +385,20 @@ def chat():
 # 11. HTML FRONTEND
 # ==============================================================
 
-HTML_PAGE = """<!DOCTYPE html>
+HTML_PAGE = """
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CineAgent — AI Movie Assistant</title>
+<title>CineAgent</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#0a0a0f;--surface:#13131a;--card:#1c1c26;--border:#2a2a38;--gold:#e8c96d;--gold2:#f5dfa0;--text:#e8e8f0;--muted:#7070a0;--accent:#5b8cff;--green:#6deba7}
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-weight:300;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+body{background:var(--bg);color:var(--text);font-family:"DM Sans",sans-serif;font-weight:300;height:100vh;display:flex;flex-direction:column;overflow:hidden}
 header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
-.logo{font-family:'Bebas Neue',sans-serif;font-size:2rem;letter-spacing:3px;color:var(--gold);line-height:1}
+.logo{font-family:"Bebas Neue",sans-serif;font-size:2rem;letter-spacing:3px;color:var(--gold);line-height:1}
 .logo span{color:var(--text)}
 .tagline{font-size:.75rem;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
 .pill{margin-left:auto;background:#1e2a1e;color:var(--green);font-size:.7rem;letter-spacing:1px;text-transform:uppercase;padding:4px 12px;border-radius:20px;border:1px solid #2a4a2a}
@@ -406,7 +407,7 @@ header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:
 .sidebar-title{font-size:.65rem;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;padding-left:4px}
 .suggestion{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:.78rem;color:var(--text);cursor:pointer;transition:all .2s;line-height:1.4}
 .suggestion:hover{border-color:var(--gold);color:var(--gold);background:#1e1c14}
-.suggestion .s-tag{display:block;font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+.s-tag{display:block;font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
 .chat-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden}
 #messages{flex:1;overflow-y:auto;padding:24px 28px;display:flex;flex-direction:column;gap:20px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
 .msg{display:flex;flex-direction:column;gap:6px;animation:fadeUp .3s ease}
@@ -418,14 +419,14 @@ header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:
 .bubble b{color:var(--gold)}
 .claude-bubble{max-width:520px;padding:12px 16px;border-radius:14px;font-size:.85rem;line-height:1.7;background:linear-gradient(135deg,#1a1630,#141020);border:1px solid rgba(232,201,109,.25);border-bottom-left-radius:4px;color:#c8c8e8}
 .claude-label{font-size:.6rem;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin-bottom:6px;display:flex;align-items:center;gap:5px}
-.claude-label::before{content:'✦';font-size:.7rem}
+.claude-label::before{content:"✦";font-size:.7rem}
 .cards{display:flex;flex-direction:column;gap:10px;width:100%;max-width:680px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;gap:14px;align-items:flex-start;transition:border-color .2s;animation:fadeUp .3s ease both}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;gap:14px;transition:border-color .2s;animation:fadeUp .3s ease both}
 .card:hover{border-color:var(--gold)}
-.card-rank{font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:var(--border);line-height:1;min-width:32px;text-align:center}
+.card-rank{font-family:"Bebas Neue",sans-serif;font-size:1.8rem;color:var(--border);line-height:1;min-width:32px;text-align:center}
 .card:hover .card-rank{color:var(--gold)}
 .card-body{flex:1}
-.card-title{font-size:.95rem;font-weight:500;color:var(--text);margin-bottom:3px}
+.card-title{font-size:.95rem;font-weight:500;margin-bottom:3px}
 .card-meta{font-size:.72rem;color:var(--muted);margin-bottom:6px;display:flex;gap:10px;flex-wrap:wrap}
 .card-genres{font-size:.72rem;color:var(--gold);margin-bottom:6px}
 .card-overview{font-size:.78rem;color:#9090b8;line-height:1.5}
@@ -433,17 +434,19 @@ header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:
 .rating-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
 .cluster-grid{display:flex;flex-wrap:wrap;gap:10px;max-width:680px}
 .cluster-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;flex:1;min-width:160px;animation:fadeUp .3s ease both}
-.cluster-name{font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:1px;color:var(--gold);margin-bottom:4px}
+.cluster-name{font-family:"Bebas Neue",sans-serif;font-size:1rem;letter-spacing:1px;color:var(--gold);margin-bottom:4px}
 .cluster-stat{font-size:.72rem;color:var(--muted);line-height:1.7}
 .typing{display:flex;gap:5px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:14px;border-bottom-left-radius:4px;width:fit-content}
 .dot{width:7px;height:7px;background:var(--muted);border-radius:50%;animation:bounce 1.2s infinite}
 .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
 @keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px);background:var(--gold)}}
 .input-bar{padding:16px 28px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:10px;flex-shrink:0}
-#input{flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:.88rem;outline:none;transition:border-color .2s}
-#input::placeholder{color:var(--muted)}#input:focus{border-color:var(--gold)}
-#send{background:var(--gold);color:#000;border:none;border-radius:12px;padding:0 22px;font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:2px;cursor:pointer;transition:background .2s,transform .1s}
-#send:hover{background:var(--gold2)}#send:active{transform:scale(.97)}
+#input{flex:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-family:"DM Sans",sans-serif;font-size:.88rem;outline:none;transition:border-color .2s}
+#input::placeholder{color:var(--muted)}
+#input:focus{border-color:var(--gold)}
+#send{background:var(--gold);color:#000;border:none;border-radius:12px;padding:0 22px;font-family:"Bebas Neue",sans-serif;font-size:1rem;letter-spacing:2px;cursor:pointer;transition:background .2s,transform .1s}
+#send:hover{background:var(--gold2)}
+#send:active{transform:scale(.97)}
 </style>
 </head>
 <body>
@@ -452,62 +455,133 @@ header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:
     <div class="logo">Cine<span>Agent</span></div>
     <div class="tagline">AI-Powered Movie Intelligence</div>
   </div>
-  <div class="pill" style="margin-left:auto">● Live</div>
+  <div class="pill">&#x25CF; Live</div>
 </header>
 <div class="main">
   <aside class="sidebar">
     <div class="sidebar-title">Try asking</div>
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)" data-q="I want a funny romantic comedy with a love story"><span class="s-tag">Search</span>Funny romantic comedy</div>
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)" data-q="scary ghost movie with mystery and suspense"><span class="s-tag">Search</span>Scary ghost mystery</div>
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)" data-q="movies similar to Inception"><span class="s-tag">Similar</span>Movies similar to Inception</div>
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)" data-q="animated film for kids with magic and fantasy"><span class="s-tag">Search</span>Animated kids fantasy</div>
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)" data-q="show me big budget box office flops"><span class="s-tag">Anomaly</span>Big budget flops</div>
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)" data-q="movies similar to The Dark Knight"><span class="s-tag">Similar</span>Movies like The Dark Knight</div>
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)" data-q="what are the movie clusters"><span class="s-tag">Clusters</span>What are the clusters?</div>
-    <div class="suggestion" onclick="sendSuggestion(this.dataset.q)" data-q="find me hidden gems with high rating"><span class="s-tag">Anomaly</span>Hidden gems</div>
+    <div class="suggestion" onclick="sendSuggestion('I want a funny romantic comedy with a love story')"><span class="s-tag">Search</span>Funny romantic comedy</div>
+    <div class="suggestion" onclick="sendSuggestion('scary ghost movie with mystery and suspense')"><span class="s-tag">Search</span>Scary ghost mystery</div>
+    <div class="suggestion" onclick="sendSuggestion('movies similar to Inception')"><span class="s-tag">Similar</span>Movies similar to Inception</div>
+    <div class="suggestion" onclick="sendSuggestion('animated film for kids with magic and fantasy')"><span class="s-tag">Search</span>Animated kids fantasy</div>
+    <div class="suggestion" onclick="sendSuggestion('show me big budget box office flops')"><span class="s-tag">Anomaly</span>Big budget flops</div>
+    <div class="suggestion" onclick="sendSuggestion('movies similar to The Dark Knight')"><span class="s-tag">Similar</span>Movies like The Dark Knight</div>
+    <div class="suggestion" onclick="sendSuggestion('what are the movie clusters')"><span class="s-tag">Clusters</span>What are the clusters?</div>
+    <div class="suggestion" onclick="sendSuggestion('find me hidden gems with high rating')"><span class="s-tag">Anomaly</span>Hidden gems</div>
   </aside>
   <div class="chat-wrap">
     <div id="messages">
       <div class="msg bot">
         <div class="bubble">
-          👋 Welcome to <b>CineAgent</b> — your AI movie assistant.<br><br>
+          &#x1F44B; Welcome to <b>CineAgent</b> &#x2014; your AI movie assistant.<br><br>
           I combine <b>Machine Learning</b> with <b>Claude AI</b> to give you smart recommendations.<br><br>
-          • <b>Search</b> by mood or description<br>
-          • <b>Find similar</b> movies ("movies similar to Inception")<br>
-          • <b>Detect anomalies</b> (flops, hidden gems)<br>
-          • <b>Explore clusters</b> — how movies are grouped<br><br>
+          &#x2022; <b>Search</b> by mood or description<br>
+          &#x2022; <b>Find similar</b> movies ("movies similar to Inception")<br>
+          &#x2022; <b>Detect anomalies</b> (flops, hidden gems)<br>
+          &#x2022; <b>Explore clusters</b> &#x2014; how movies are grouped<br><br>
           What are you in the mood for?
         </div>
       </div>
     </div>
     <div class="input-bar">
-      <input id="input" type="text" placeholder="Describe a movie, or ask anything..." autocomplete="off"/>
+      <input id="input" type="text" placeholder="Describe a movie, or ask anything..." autocomplete="off" />
       <button id="send">Send</button>
     </div>
   </div>
 </div>
 <script>
-const messagesEl=document.getElementById("messages"),inputEl=document.getElementById("input"),sendBtn=document.getElementById("send");
-function ratingColor(r){return r>=7.5?"#6deba7":r>=6?"#e8c96d":"#ff6b6b"}
-function renderCards(results){if(!results||!results.length)return"";return`<div class="cards">${results.map((r,i)=>`<div class="card" style="animation-delay:${i*.06}s"><div class="card-rank">${r.rank}</div><div class="card-body"><div class="card-title">${r.title}</div><div class="card-meta"><span>${r.year}</span><span>⬝ ${r.director}</span><span>⬝ <span class="rating-dot" style="background:${ratingColor(r.rating)}"></span>${r.rating}/10</span></div><div class="card-genres">${r.genres}</div><div class="card-overview">${r.overview}</div></div><div class="card-score">score<br>${r.score}</div></div>`).join("")}</div>`}
-function renderClusters(clusters){if(!clusters)return"";return`<div class="cluster-grid">${clusters.map((c,i)=>`<div class="cluster-card" style="animation-delay:${i*.07}s"><div class="cluster-name">${c.name}</div><div class="cluster-stat">🎬 ${c.count} movies<br>⭐ Avg: ${c.avg_rating}<br>🎭 ${c.top_genres}</div></div>`).join("")}</div>`}
-function addMessage(role,html,extra=""){const div=document.createElement("div");div.className=`msg ${role}`;div.innerHTML=`<div class="bubble">${html}</div>${extra}`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
-function addClaudeReply(text){const div=document.createElement("div");div.className="msg bot";div.innerHTML=`<div class="claude-bubble"><div class="claude-label">Claude AI Analysis</div>${text}</div>`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
-function addTyping(){const div=document.createElement("div");div.className="msg bot";div.id="typing";div.innerHTML=`<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
-function removeTyping(){const t=document.getElementById("typing");if(t)t.remove()}
-async function callClaudeAPI(userText, results, intent) {
+var msgs = document.getElementById("messages");
+var inp  = document.getElementById("input");
+var btn  = document.getElementById("send");
+
+function ratingColor(r) {
+  if (r >= 7.5) return "#6deba7";
+  if (r >= 6)   return "#e8c96d";
+  return "#ff6b6b";
+}
+
+function renderCards(results) {
+  if (!results || !results.length) return "";
+  var html = '<div class="cards">';
+  for (var i = 0; i < results.length; i++) {
+    var r = results[i];
+    html += '<div class="card" style="animation-delay:' + (i * 0.06) + 's">';
+    html += '<div class="card-rank">' + r.rank + '</div>';
+    html += '<div class="card-body">';
+    html += '<div class="card-title">' + r.title + '</div>';
+    html += '<div class="card-meta"><span>' + r.year + '</span><span>&sdot; ' + r.director + '</span>';
+    html += '<span>&sdot; <span class="rating-dot" style="background:' + ratingColor(r.rating) + '"></span>' + r.rating + '/10</span></div>';
+    html += '<div class="card-genres">' + r.genres + '</div>';
+    html += '<div class="card-overview">' + r.overview + '</div>';
+    html += '</div><div class="card-score">score<br>' + r.score + '</div></div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderClusters(clusters) {
+  if (!clusters) return "";
+  var html = '<div class="cluster-grid">';
+  for (var i = 0; i < clusters.length; i++) {
+    var c = clusters[i];
+    html += '<div class="cluster-card" style="animation-delay:' + (i * 0.07) + 's">';
+    html += '<div class="cluster-name">' + c.name + '</div>';
+    html += '<div class="cluster-stat">&#x1F3AC; ' + c.count + ' movies<br>&#x2B50; Avg: ' + c.avg_rating + '<br>&#x1F3AD; ' + c.top_genres + '</div>';
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function addMessage(role, html, extra) {
+  var div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = '<div class="bubble">' + html + '</div>' + (extra || "");
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function addClaudeReply(text) {
+  var div = document.createElement("div");
+  div.className = "msg bot";
+  div.innerHTML = '<div class="claude-bubble"><div class="claude-label">Claude AI Analysis</div>' + text + '</div>';
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function addTyping() {
+  var div = document.createElement("div");
+  div.className = "msg bot";
+  div.id = "typing";
+  div.innerHTML = '<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function removeTyping() {
+  var t = document.getElementById("typing");
+  if (t) t.remove();
+}
+
+function callClaudeAPI(userText, results, intent) {
   if (!results || results.length === 0) return;
-  let apiKey = "";
-  try { const kr = await fetch("/api-key"); const kd = await kr.json(); apiKey = kd.key || ""; } catch(e) {}
-  if (!apiKey) return;
-  try {
-    const movieList = results.slice(0,5).map(r => `- ${r.title} (${r.year}): ${r.genres}, rated ${r.rating}/10`).join("\n");
-    const prompt = intent === "similar"
-      ? `The user asked: "${userText}". We found these similar movies:\n${movieList}\nWrite 2-3 enthusiastic sentences recommending these movies, mentioning 1-2 by name. Be conversational.`
+  fetch("/api-key").then(function(r) { return r.json(); }).then(function(kd) {
+    var apiKey = kd.key || "";
+    if (!apiKey) return;
+    var movieList = "";
+    for (var i = 0; i < Math.min(results.length, 5); i++) {
+      movieList += "- " + results[i].title + " (" + results[i].year + "): " + results[i].genres + ", rated " + results[i].rating + "/10
+";
+    }
+    var prompt = intent === "similar"
+      ? "The user asked: " + userText + ". We found these similar movies:
+" + movieList + "Write 2-3 enthusiastic sentences recommending these. Mention 1-2 by name. Be conversational."
       : intent === "anomaly"
-      ? `The user asked: "${userText}". We found these unusual movies:\n${movieList}\nWrite 2-3 interesting sentences about what makes them unusual. Mention 1-2 by name.`
-      : `The user asked: "${userText}". We found these matching movies:\n${movieList}\nWrite 2-3 enthusiastic sentences recommending these movies, mentioning 1-2 by name. Be conversational.`;
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      ? "The user asked: " + userText + ". We found these unusual movies:
+" + movieList + "Write 2-3 interesting sentences about what makes them unusual. Mention 1-2 by name."
+      : "The user asked: " + userText + ". We found these matching movies:
+" + movieList + "Write 2-3 enthusiastic sentences recommending these. Mention 1-2 by name. Be conversational.";
+    fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -519,29 +593,44 @@ async function callClaudeAPI(userText, results, intent) {
         max_tokens: 200,
         messages: [{ role: "user", content: prompt }]
       })
-    });
-    const data = await res.json();
-    if (data.content && data.content[0]) addClaudeReply(data.content[0].text);
-  } catch(e) { console.log("Claude API error:", e); }
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      if (data.content && data.content[0]) addClaudeReply(data.content[0].text);
+    }).catch(function(e) { console.log("Claude API error:", e); });
+  }).catch(function(e) { console.log("Key fetch error:", e); });
 }
 
-async function sendMessage(text){
-  if(!text.trim())return;
-  addMessage("user",text);inputEl.value="";addTyping();
-  try{
-    const res=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:text})});
-    const data=await res.json();removeTyping();
-    const extra=data.intent==="cluster_info"?renderClusters(data.clusters):renderCards(data.results);
-    addMessage("bot",data.reply,extra);
-    if(data.intent !== "cluster_info") setTimeout(()=>callClaudeAPI(text, data.results, data.intent), 400);
-  }catch(e){removeTyping();addMessage("bot","⚠️ Something went wrong. Please try again.")}
+function sendMessage(text) {
+  if (!text || !text.trim()) return;
+  addMessage("user", text);
+  inp.value = "";
+  addTyping();
+  fetch("/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: text })
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    removeTyping();
+    var extra = data.intent === "cluster_info" ? renderClusters(data.clusters) : renderCards(data.results);
+    addMessage("bot", data.reply, extra);
+    if (data.intent !== "cluster_info") {
+      setTimeout(function() { callClaudeAPI(text, data.results, data.intent); }, 400);
+    }
+  }).catch(function(e) {
+    removeTyping();
+    addMessage("bot", "Something went wrong. Please try again.");
+  });
 }
-function sendSuggestion(q){sendMessage(q)}
-sendBtn.addEventListener("click",()=>sendMessage(inputEl.value));
-inputEl.addEventListener("keydown",e=>{if(e.key==="Enter")sendMessage(inputEl.value)});
+
+function sendSuggestion(q) { sendMessage(q); }
+
+btn.addEventListener("click", function() { sendMessage(inp.value); });
+inp.addEventListener("keydown", function(e) { if (e.key === "Enter") sendMessage(inp.value); });
 </script>
 </body>
-</html>"""
+</html>
+"""
+
+
 
 
 # ==============================================================
