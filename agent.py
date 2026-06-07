@@ -7,7 +7,7 @@ from collections import Counter
 from flask import Flask, request, jsonify, Response
 
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.cluster import KMeans
+from sklearn.cluster import MiniBatchKMeans
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.ensemble import IsolationForest
@@ -59,10 +59,10 @@ def vectorize_column(col, max_features=None):
         columns=[col + "_" + c for c in vec.get_feature_names_out()])
 
 genres_vec   = vectorize_column("genres")
-keywords_vec = vectorize_column("keywords", max_features=100)
+keywords_vec = vectorize_column("keywords", max_features=50)
 cluster_data = pd.concat([numeric_scaled, genres_vec, keywords_vec], axis=1)
 
-kmeans = KMeans(n_clusters=5, random_state=42, n_init=10)
+kmeans = MiniBatchKMeans(n_clusters=5, random_state=42, n_init=3)
 df["cluster"] = kmeans.fit_predict(cluster_data)
 
 CLUSTER_NAMES = {
@@ -83,7 +83,7 @@ def clean_text(text):
     return re.sub(r"\s+", " ", text).strip()
 
 df["overview_clean"] = df["overview"].apply(clean_text)
-tfidf = TfidfVectorizer(stop_words="english", max_features=5000, ngram_range=(1, 2))
+tfidf = TfidfVectorizer(stop_words="english", max_features=3000, ngram_range=(1, 2))
 tfidf_matrix = tfidf.fit_transform(df["overview_clean"])
 
 # ==============================================================
@@ -91,7 +91,7 @@ tfidf_matrix = tfidf.fit_transform(df["overview_clean"])
 # ==============================================================
 
 sim_data = pd.concat([numeric_scaled, genres_vec,
-                      vectorize_column("keywords", max_features=300)], axis=1)
+                      vectorize_column("keywords", max_features=50)], axis=1)
 from scipy.sparse import csr_matrix as sp_csr
 sim_data_sparse = sp_csr(sim_data.values)
 
@@ -103,7 +103,7 @@ iso_features = ["popularity", "vote_average", "vote_count", "runtime"]
 iso_data = df[iso_features].fillna(0)
 iso_scaler = MinMaxScaler()
 iso_scaled = iso_scaler.fit_transform(iso_data)
-iso = IsolationForest(n_estimators=200, contamination=0.05, random_state=42)
+iso = IsolationForest(n_estimators=100, contamination=0.05, random_state=42)
 df["anomaly"]       = iso.fit_predict(iso_scaled)
 df["anomaly_score"] = iso.decision_function(iso_scaled)
 
