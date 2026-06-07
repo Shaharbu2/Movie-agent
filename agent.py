@@ -1000,7 +1000,7 @@ header {{
 
 <section class="hero">
   <h1>מחפשים את הסרט המושלם? 🍿</h1>
-  <p>שאלו על שנה, ז׳אנר, נטפליקס, סרטים דומים או חריגות מעניינות בדאטה</p>
+  <p>שאלו על שנה, ז׳אנר, נטפליקס, סרטים דומים ועוד</p>
 </section>
 
 <main class="stage">
@@ -1008,8 +1008,7 @@ header {{
   <div class="content">
     <div class="quick-title">דוגמאות לשאלות:</div>
     <div class="chips">
-      <button class="chip" onclick="go('היי')">היי</button>
-      <button class="chip" onclick="go('תמצא לי סרט קומדיה משנת 2000')">קומדיה משנת 2000</button>
+      <button class="chip" onclick="go('קומדיה משנת 2000')">קומדיה משנת 2000</button>
       <button class="chip" onclick="go('סרטי אקשן שקיימים בנטפליקס')">אקשן בנטפליקס</button>
       <button class="chip" onclick="go('movies similar to Inception')">דומה ל-Inception</button>
       <button class="chip" onclick="go('find me hidden gems')">יהלומים נסתרים</button>
