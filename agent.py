@@ -268,29 +268,7 @@ def call_openai(user_text, results, intent):
     except Exception as e:
         print("OpenAI error:", str(e))
         return None
-    try:
-        import urllib.request
-        movies = ""
-        for r in results[:5]:
-            movies += "- " + r["title"] + " (" + str(r["year"]) + "): " + r["genres"] + ", " + str(r["rating"]) + "/10\n"
-        prompt = "ענה בעברית בלבד. המשתמש שאל: " + user_text + ". סרטים שנמצאו:\n" + movies + "כתוב 2-3 משפטים ידידותיים שממליצים על הסרטים, ציין 1-2 סרטים בשמם. טקסט פשוט בלבד."
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": 200, "temperature": 0.7}
-        }
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + api_key
-        req = urllib.request.Request(url,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST")
-        with urllib.request.urlopen(req, timeout=15) as response:
-            data = json.loads(response.read())
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        print("Gemini error:", str(e))
-        import traceback
-        traceback.print_exc()
-        return None
+
 
 @app.route("/chat", methods=["POST"])
 def chat():
