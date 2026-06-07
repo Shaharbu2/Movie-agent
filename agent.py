@@ -61,6 +61,9 @@ for c in ["vote_average", "popularity", "runtime", "vote_count"]:
 
 df["release_year"] = df["release_year"].astype(np.int16)
 
+MIN_DATA_YEAR = int(df.loc[df["release_year"] > 0, "release_year"].min())
+MAX_DATA_YEAR = int(df["release_year"].max())
+
 # ==============================================================
 # 2. HELPERS
 # ==============================================================
@@ -351,6 +354,11 @@ def apply_filters(base_df, text):
     filtered = base_df.copy()
     year = extract_year(text)
     platform = extract_platform(text)
+
+    # If the user asks for a year earlier than the dataset range,
+    # do not return random movies from later years.
+    if year is not None and year < MIN_DATA_YEAR:
+        return filtered.iloc[0:0], year, platform
 
     if year is not None:
         # Year means "from this year and above"
@@ -645,6 +653,8 @@ Important rules:
 - Do not invent movie titles.
 - Do not add movies that are not in the dataset results.
 - If no dataset results were found, politely say that no suitable match was found and suggest changing the movie name, year, genre, or platform.
+- If the user asked for a year earlier than the dataset supports, explain that the dataset starts from 1995 and therefore no matching movies were found.
+- When there are no dataset results, do NOT imply that recommendations exist.
 - Write only ONE answer. Do not duplicate sections.
 - Match the user's language: Hebrew if the user writes Hebrew, English if the user writes English.
 - Keep the answer friendly, concise, and useful.
@@ -659,6 +669,7 @@ Anomaly rules:
             f"User message: {user_text}\n"
             f"Detected intent: {intent}\n"
             f"Detected year filter: {result.get('year')}\n"
+            f"Dataset year range: {MIN_DATA_YEAR}-{MAX_DATA_YEAR}\n"
             f"Detected platform filter: {result.get('platform')}\n"
             f"Detected genres: {result.get('genres')}\n"
             f"Reference movie: {result.get('reference_movie')}\n"
@@ -714,6 +725,13 @@ def fallback_reply(user_text, result):
         return "מצאתי את קבוצות הסרטים המרכזיות במאגר." if heb else "I found the main movie clusters in the dataset."
 
     if not results:
+        year = result.get("year")
+        if year and year < MIN_DATA_YEAR:
+            return (
+                f"לא מצאתי התאמה, כי הדאטה שלנו מתחיל משנת {MIN_DATA_YEAR}. אפשר לנסות שנה מאוחרת יותר, ז׳אנר אחר או פלטפורמה אחרת."
+                if heb else
+                f"I could not find a match because the dataset starts from {MIN_DATA_YEAR}. Try a later year, another genre, or another platform."
+            )
         return "לא מצאתי התאמה טובה בדאטה. אפשר לנסות לשנות שם סרט, שנה, ז׳אנר או פלטפורמה." if heb else "I couldn’t find a good match in the dataset. Try changing the movie name, year, genre, or platform."
 
     titles = ", ".join([r["title"] for r in results[:3]])
@@ -904,17 +922,18 @@ header {{
 }}
 .chip:hover {{ background:rgba(215,25,32,.45); transform:translateY(-2px); }}
 .chat {{
-  background:rgba(255,247,236,.96);
-  color:#222;
+  background:rgba(18,18,18,.92);
+  color:#f6f1ea;
   border-radius:22px;
   height:420px;
   overflow-y:auto;
   padding:20px;
-  border:5px solid rgba(215,25,32,.18);
+  border:2px solid rgba(255,48,64,.45); box-shadow: inset 0 0 28px rgba(215,25,32,.22);
 }}
 .msg {{ display:flex; margin:12px 0; }}
 .msg.user {{ justify-content:flex-start; }}
 .msg.bot {{ justify-content:flex-end; }}
+.msg.bot:has(.cards) {{ justify-content:center; }}
 .bubble {{
   max-width:76%;
   padding:13px 16px;
@@ -926,7 +945,7 @@ header {{
 }}
 .user .bubble {{ background:linear-gradient(135deg, var(--red), var(--red2)); color:#fff; border-bottom-left-radius:4px; }}
 .bot .bubble {{ background:#f2f2f2; color:#222; border-bottom-right-radius:4px; }}
-.cards {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-top:10px; max-width:86%; }}
+.cards {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-top:10px; max-width:96%; }}
 .card {{ background:white; border:1px solid #eee; border-radius:16px; padding:14px; color:#222; box-shadow:0 8px 20px rgba(0,0,0,.08); }}
 .card-title {{ font-weight:900; color:#b10e15; font-size:17px; }}
 .meta {{ color:#555; font-size:13px; margin:5px 0; }}
@@ -978,23 +997,23 @@ header {{
 <body>
 <div class="marquee"></div>
 <header>
-  <div class="logo">🎬 צ׳אטבוט <span>סרטים</span></div>
-  <div class="badge">מבוסס AI + {len(df):,} סרטים</div>
+  <div class="logo">🎬 <span>CINEMATE</span></div>
+  <div class="badge">AI powered + {len(df):,} סרטים</div>
 </header>
 
 <section class="hero">
-  <h1>מחפשים את הסרט המושלם? 🍿</h1>
-  <p>שאלו על שנה, ז׳אנר, נטפליקס, סרטים דומים או חריגות מעניינות בדאטה</p>
+  <h1>CINEMATE</h1>
+  <p>Your personal AI movie guide — tell me what you feel like watching and I’ll help you choose.</p>
 </section>
 
 <main class="stage">
   <div class="stage-top">NOW SHOWING • MOVIE AGENT • NOW SHOWING</div>
   <div class="content">
-    <div class="quick-title">דוגמאות לשאלות:</div>
+    <div class="quick-title">Try asking:</div>
     <div class="chips">
       <button class="chip" onclick="go('היי')">היי</button>
-      <button class="chip" onclick="go('תמצא לי סרט קומדיה משנת 2000')">קומדיה משנת 2000</button>
-      <button class="chip" onclick="go('סרטי אקשן שקיימים בנטפליקס')">אקשן בנטפליקס</button>
+      <button class="chip" onclick="go('I want a comedy movie from 2000')">Comedy from 2000</button>
+      <button class="chip" onclick="go('Action movies on Netflix')">Action on Netflix</button>
       <button class="chip" onclick="go('movies similar to Inception')">דומה ל-Inception</button>
       <button class="chip" onclick="go('find me hidden gems')">יהלומים נסתרים</button>
       <button class="chip" onclick="go('what are the movie clusters')">הצג קבוצות סרטים</button>
@@ -1002,12 +1021,12 @@ header {{
 
     <div id="chat" class="chat">
       <div class="msg bot">
-        <div class="bubble">ברוכים הבאים לקולנוע החכם 🎞️ כתבו לי מה בא לכם לראות — אפשר לבקש לפי שנה, ז׳אנר או פלטפורמה כמו Netflix.</div>
+        <div class="bubble">Welcome to CINEMATE 🎞️ Tell me what kind of movie you're in the mood for, and I’ll help you find the right one.</div>
       </div>
     </div>
 
     <div class="input-row">
-      <input id="inp" placeholder="לדוגמה: אהבתי Avatar ואני רוצה סרט אקשן מ-2021 ומעלה..." autocomplete="off">
+      <input id="inp" placeholder="Example: I liked Avatar and I want an action movie from 2021 and above..." autocomplete="off">
       <button id="btn">שליחה</button>
     </div>
   </div>
@@ -1084,7 +1103,10 @@ function send(){{
   .then(data => {{
     rmTyping();
     let extra = data.intent === 'cluster_info' ? clusters(data.clusters) : cards(data.results);
-    add('bot', '<div class="bubble">' + esc(data.reply) + '</div>' + extra);
+    add('bot', '<div class="bubble">' + esc(data.reply) + '</div>');
+    if (extra) {{
+      add('bot', extra);
+    }}
   }})
   .catch(() => {{
     rmTyping();
