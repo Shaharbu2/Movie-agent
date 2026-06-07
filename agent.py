@@ -454,8 +454,12 @@ def handle_search(user_text, top_n=3):
     if not has_clear_filter and best_score < 0.08:
         return empty_result("search", year=year, platform=platform, genres=matched_genres)
 
-    if has_clear_filter and best_score == 0:
-        # If only filters exist, rank by quality/popularity instead of returning random text matches
+    # With filters but no TF-IDF signal: only return if genre/cluster score is meaningful
+    if has_clear_filter and best_score < 0.05 and not matched_genres:
+        return empty_result("search", year=year, platform=platform, genres=matched_genres)
+
+    if has_clear_filter and best_score == 0 and matched_genres:
+        # Genre filter matched rows but no TF-IDF overlap — rank by quality
         ranked = filtered.sort_values(["vote_average", "vote_count", "popularity"], ascending=False).head(top_n)
         if ranked.empty:
             return empty_result("search", year=year, platform=platform, genres=matched_genres)
