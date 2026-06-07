@@ -192,6 +192,28 @@ def extract_platform(text):
             return platform
     return None
 
+MOVIE_WORDS = [
+    "סרט", "סרטים", "קולנוע", "נטפליקס", "דיסני", "פריים", "הולו",
+    "קומדיה", "אקשן", "אימה", "דרמה", "רומנטי", "רומנטיקה", "מתח",
+    "אנימציה", "ילדים", "פנטזיה", "מדע בדיוני", "דומה", "כמו",
+    "movie", "movies", "film", "films", "cinema", "netflix", "hulu",
+    "prime", "disney", "comedy", "action", "horror", "drama", "romance",
+    "thriller", "animation", "similar", "like", "recommend"
+]
+
+def is_movie_related(text):
+    t = text.lower().strip()
+    if extract_year(t) or extract_platform(t) or extract_genres(t):
+        return True
+    return any(w in t for w in MOVIE_WORDS)
+
+def no_relevant_answer():
+    return {
+        "intent": "search",
+        "reply": "לא מצאתי התאמה מספיק טובה לשאלה שלך. אני צ׳אטבוט סרטים 🎬 אפשר לשאול אותי למשל: סרטי קומדיה משנת 2000, סרטים בנטפליקס, סרטים דומים ל-Inception או סרטים עם דירוג גבוה.",
+        "results": []
+    }
+
 def apply_filters(base_df, text):
     filtered = base_df
     year = extract_year(text)
@@ -244,6 +266,9 @@ def row_to_result(rank, idx, score=0):
 # ==============================================================
 
 def handle_search(user_text, top_n=3):
+    if not is_movie_related(user_text):
+        return no_relevant_answer()
+
     filtered, year, platform = apply_filters(df, user_text)
 
     if filtered.empty:
@@ -256,6 +281,11 @@ def handle_search(user_text, top_n=3):
     matched_genres = extract_genres(user_text)
     matched_clusters = genres_to_clusters(matched_genres)
     cleaned = clean_text(user_text)
+
+    # If the message has no meaningful searchable text and no filters, don't invent results
+    if not cleaned and not matched_genres and not year and not platform:
+        return no_relevant_answer()
+
     user_vec = tfidf.transform([cleaned])
     tfidf_scores_all = cosine_similarity(user_vec, tfidf_matrix).flatten()
 
@@ -272,9 +302,29 @@ def handle_search(user_text, top_n=3):
     tfidf_scores = tfidf_scores_all[indices]
 
     combined = 0.50 * tfidf_scores + 0.30 * genre_scores + 0.20 * cluster_scores
-    order = combined.argsort()[-top_n:][::-1]
 
-    results = [row_to_result(i + 1, indices[pos], combined[pos]) for i, pos in enumerate(order)]
+    # Important: do not return random top 3 when scores are too weak.
+    # With only a year/platform filter, allow ranked results by popularity/rating.
+    has_clear_filter = bool(year or platform or matched_genres)
+    best_score = float(combined.max()) if len(combined) else 0.0
+
+    if not has_clear_filter and best_score < 0.08:
+        return no_relevant_answer()
+
+    if has_clear_filter and best_score == 0:
+        # For requests like "סרטים משנת 2000" where text similarity is low,
+        # sort filtered movies by rating and vote_count instead of returning unrelated matches.
+        filtered_ranked = filtered.sort_values(["vote_average", "vote_count", "popularity"], ascending=False).head(top_n)
+        results = []
+        for i, (idx, row) in enumerate(filtered_ranked.iterrows()):
+            results.append(row_to_result(i + 1, idx, row["vote_average"] / 10))
+    else:
+        order = combined.argsort()[-top_n:][::-1]
+        # Keep only reasonably relevant results
+        chosen = [pos for pos in order if combined[pos] >= max(0.04, best_score * 0.25)]
+        if not chosen:
+            return no_relevant_answer()
+        results = [row_to_result(i + 1, indices[pos], combined[pos]) for i, pos in enumerate(chosen[:top_n])]
 
     reply = "מצאתי עד 3 סרטים שמתאימים לבקשה שלך"
     extras = []
