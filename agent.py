@@ -357,6 +357,10 @@ def handle_cluster_info(user_text):
 def index():
     return render_template_string(HTML_PAGE)
 
+@app.route("/api-key")
+def api_key():
+    return jsonify({"key": os.environ.get("ANTHROPIC_API_KEY", "")})
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json()
@@ -448,11 +452,7 @@ header{display:flex;align-items:center;gap:14px;padding:18px 28px;border-bottom:
     <div class="logo">Cine<span>Agent</span></div>
     <div class="tagline">AI-Powered Movie Intelligence</div>
   </div>
-  <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
-    <input id="apiKeyInput" type="password" placeholder="Paste Anthropic API key..." 
-      style="background:#1c1c26;border:1px solid #2a2a38;border-radius:8px;padding:7px 12px;color:#e8e8f0;font-size:.75rem;width:220px;outline:none"/>
-    <div class="pill">● Live</div>
-  </div>
+  <div class="pill" style="margin-left:auto">● Live</div>
 </header>
 <div class="main">
   <aside class="sidebar">
@@ -496,8 +496,10 @@ function addClaudeReply(text){const div=document.createElement("div");div.classN
 function addTyping(){const div=document.createElement("div");div.className="msg bot";div.id="typing";div.innerHTML=`<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>`;messagesEl.appendChild(div);messagesEl.scrollTop=messagesEl.scrollHeight}
 function removeTyping(){const t=document.getElementById("typing");if(t)t.remove()}
 async function callClaudeAPI(userText, results, intent) {
-  const apiKey = document.getElementById("apiKeyInput") ? document.getElementById("apiKeyInput").value : "";
-  if (!apiKey || !results || results.length === 0) return;
+  if (!results || results.length === 0) return;
+  let apiKey = "";
+  try { const kr = await fetch("/api-key"); const kd = await kr.json(); apiKey = kd.key || ""; } catch(e) {}
+  if (!apiKey) return;
   try {
     const movieList = results.slice(0,5).map(r => `- ${r.title} (${r.year}): ${r.genres}, rated ${r.rating}/10`).join("\n");
     const prompt = intent === "similar"
