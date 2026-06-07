@@ -224,7 +224,7 @@ def test_claude():
     try:
         import urllib.request
         payload = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-haiku-4-5-20251001",
             "max_tokens": 50,
             "messages": [{"role": "user", "content": "Say hello in one sentence."}]
         }
@@ -255,7 +255,7 @@ def call_claude(user_text, results, intent):
             movies += "- " + r["title"] + " (" + str(r["year"]) + "): " + r["genres"] + ", " + str(r["rating"]) + "/10\n"
         prompt = 'User asked: "' + user_text + '". Movies found:\n' + movies + 'Write 2-3 friendly sentences recommending these, mention 1-2 by name.'
         payload = {
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-haiku-4-5-20251001",
             "max_tokens": 200,
             "messages": [{"role": "user", "content": prompt}]
         }
