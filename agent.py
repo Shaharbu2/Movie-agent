@@ -216,6 +216,34 @@ def index():
 def api_key_route():
     return jsonify({"key": os.environ.get("ANTHROPIC_API_KEY","")})
 
+@app.route("/test-claude")
+def test_claude():
+    key = os.environ.get("ANTHROPIC_API_KEY","")
+    if not key:
+        return jsonify({"status": "error", "message": "No API key found in environment"})
+    try:
+        import urllib.request
+        payload = {
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 50,
+            "messages": [{"role": "user", "content": "Say hello in one sentence."}]
+        }
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read())
+            return jsonify({"status": "success", "reply": data["content"][0]["text"]})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
 def call_claude(user_text, results, intent):
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key or not results:
@@ -245,7 +273,10 @@ def call_claude(user_text, results, intent):
             data = json.loads(response.read())
             return data["content"][0]["text"]
     except Exception as e:
-        print("Claude error:", e)
+        print("Claude error type:", type(e).__name__)
+        print("Claude error:", str(e))
+        import traceback
+        traceback.print_exc()
         return None
 
 @app.route("/chat", methods=["POST"])
