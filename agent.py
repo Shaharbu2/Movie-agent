@@ -1332,14 +1332,25 @@ def wants_more(text):
 
 
 def maybe_out_of_scope_during_interview(text):
+    """
+    Guardrail for clearly unrelated questions.
+    Important: this must catch short off-topic questions too, such as "מה המזג אוויר?".
+    It should NOT block normal short interview answers like "קומדיה", "דייט", "חדשים", "Netflix".
+    """
     t = clean_text(text)
-    if len(t.split()) <= 5:
-        return False
+
     unrelated = [
-        "weather", "salary", "excel", "politics", "news", "stock", "recipe",
-        "מזג אוויר", "שכר", "אקסל", "פוליטיקה", "חדשות", "מניות", "מתכון"
+        "weather", "forecast", "temperature", "rain", "salary", "excel", "politics",
+        "news", "stock", "recipe", "football", "basketball", "bank", "tax",
+        "מזג", "מזג אוויר", "תחזית", "גשם", "טמפרטורה", "שכר", "משכורת",
+        "אקסל", "פוליטיקה", "חדשות", "מניות", "מתכון", "כדורגל", "כדורסל",
+        "בנק", "מס", "מיסים", "גובה", "משקל"
     ]
-    return any(x in t for x in unrelated) and not is_movie_related(text)
+
+    if any(x in t for x in unrelated):
+        return True
+
+    return False
 
 
 def interview_question(step, heb=True):
@@ -1522,7 +1533,7 @@ def fallback_reply(user_text, result):
         return "היי! 🎬 בוא נמצא יחד את הסרט המושלם. איזה סוג סרט בא לך לראות?" if heb else "Hi! 🎬 Let’s find the perfect movie together. What kind of movie are you in the mood for?"
 
     if intent == "out_of_scope":
-        return "אני כאן רק כדי לעזור למצוא המלצות סרטים 🎬 אפשר לשאול אותי על ז׳אנר, שנה, פלטפורמה או סרטים דומים." if heb else "I’m only here to help with movie recommendations 🎬. You can ask about genres, years, platforms, or similar movies."
+        return "מצטער, אני כאן כדי לעזור לך לבחור סרט 🎬 אפשר לספר לי איזה סגנון בא לך, שנה, פלטפורמה או סרט שאהבת." if heb else "Sorry, I’m here to help you choose a movie 🎬. Tell me what style you want, a year, a platform, or a movie you liked."
 
     if clusters:
         return "מצאתי את קבוצות הסרטים המרכזיות במאגר." if heb else "I found the main movie clusters in the dataset."
@@ -1579,9 +1590,17 @@ def chat():
     if is_smalltalk(user_text):
         if not state.get("done"):
             q = interview_question(state.get("step", 0), heb)
-            reply = ("היי! כיף שאתה כאן 🎬 " + q) if heb else ("Hi! Happy you’re here 🎬 " + q)
+            reply = (
+                "היי, שלומי מצוין 🙂 כיף שאתה כאן. נמשיך למצוא לך סרט שמתאים בול? " + q
+            ) if heb else (
+                "Hi, I’m doing great 🙂 Glad you’re here. Let’s keep finding the right movie for you. " + q
+            )
             return jsonify({"intent": "interview_question", "reply": reply, "question": q, "results": []})
-        reply = "היי 🎬 אפשר להמשיך לעוד המלצה, או לכתוב 'סרט חדש' ולהתחיל מחדש." if heb else "Hi 🎬 We can continue with one more recommendation, or type 'new movie' to start again."
+        reply = (
+            "הכול טוב 🙂 רוצה שאציע עוד סרט לפי הבחירות שלך, או שנתחיל חיפוש חדש?"
+        ) if heb else (
+            "All good 🙂 Would you like one more movie based on your choices, or should we start a new search?"
+        )
         return jsonify({"intent": "smalltalk", "reply": reply, "results": []})
 
     # Off-topic guardrail: only block clearly unrelated questions.
