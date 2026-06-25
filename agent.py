@@ -19,7 +19,7 @@ from scipy.sparse import hstack, csr_matrix
 app = Flask(__name__)
 
 # ==============================================================
-# 1. LOAD & PREPARE DATA
+# 1. LOAD & PREPARE DATA - optimized for Render free memory
 # ==============================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -77,13 +77,16 @@ def clean_text(text):
     text = re.sub(r"[^a-z0-9\u0590-\u05FF\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
+
 def clean_title(text):
     text = str(text).lower()
     text = re.sub(r"[^a-z0-9\u0590-\u05FF\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
+
 def split_items(x):
     return [i.strip() for i in str(x).split(",") if i.strip()]
+
 
 def vectorize_column(col, max_features=None):
     vec = CountVectorizer(
@@ -95,8 +98,10 @@ def vectorize_column(col, max_features=None):
     )
     return vec.fit_transform(df[col].astype(str))
 
+
 def is_hebrew(text):
     return bool(re.search(r"[\u0590-\u05FF]", str(text)))
+
 
 def normalize_hebrew_typos(text):
     text = str(text)
@@ -114,6 +119,7 @@ def normalize_hebrew_typos(text):
     for wrong, right in replacements.items():
         text = text.replace(wrong, right)
     return text
+
 
 def normalize_user_text(text):
     return normalize_hebrew_typos(str(text).strip())
@@ -139,6 +145,7 @@ cluster_data = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr")
 kmeans = MiniBatchKMeans(n_clusters=5, random_state=42, n_init=2, batch_size=2048)
 df["cluster"] = kmeans.fit_predict(cluster_data).astype(np.int8)
 
+# Build sim_data BEFORE freeing numeric_sparse
 sim_data_sparse = hstack([numeric_sparse, genres_vec, keywords_vec], format="csr")
 
 del cluster_data, numeric_scaled, numeric_sparse, genres_vec, keywords_vec
@@ -159,7 +166,7 @@ CLUSTER_NAMES = {
 overview_clean_list = [clean_text(x) for x in df["overview"].tolist()]
 tfidf = TfidfVectorizer(stop_words="english", max_features=800, ngram_range=(1, 2), dtype=np.float32)
 tfidf_matrix = tfidf.fit_transform(overview_clean_list)
-del overview_clean_list
+del overview_clean_list  # free the list immediately after fitting
 
 # ==============================================================
 # 5. ANOMALY DETECTION - light
@@ -171,8 +178,7 @@ iso_scaled = iso_scaler.fit_transform(df[iso_features]).astype(np.float32)
 iso = IsolationForest(n_estimators=10, max_samples=2048, contamination=0.05, random_state=42)
 df["anomaly"] = iso.fit_predict(iso_scaled).astype(np.int8)
 df["anomaly_score"] = iso.decision_function(iso_scaled).astype(np.float32)
-del iso_scaled
-gc.collect()
+del iso_scaled; gc.collect()
 
 # ==============================================================
 # 6. GENRE & FILTER MAPPING
@@ -306,10 +312,7 @@ def row_to_result(rank, idx, score=0):
     }
 
 def search_movies(user_preferences, top_n=2):
-    """
-    Search for movies based on collected preferences
-    user_preferences dict has: genres, year, platform
-    """
+    """Search for movies based on collected preferences"""
     filtered = df.copy()
     
     genres = user_preferences.get("genres", [])
@@ -362,15 +365,7 @@ def build_conversation_context(conv_state):
     return " | ".join(parts) if parts else "עדיין לא נאספו העדפות"
 
 def call_openai(user_text, conv_state, results=None):
-    """
-    Call OpenAI for conversational response.
-    
-    States:
-    - "greeting": First message, ask to start
-    - "gathering": Collecting preferences, ask targeted questions
-    - "ready": Enough info collected, present recommendations
-    - "out_of_scope": User asked something unrelated
-    """
+    """Call OpenAI for conversational response."""
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return fallback_reply(user_text, conv_state, results)
@@ -396,30 +391,26 @@ def call_openai(user_text, conv_state, results=None):
         system_prompt = """
 You are MovieMate, a friendly and conversational movie recommendation AI.
 
+YOUR JOB: Ask exactly 3 questions to understand the user's movie preferences, then recommend movies.
+
 CRITICAL RULES:
 1. You ONLY recommend movies from the provided database results.
 2. You NEVER invent, imagine, or suggest movies that are not in the results.
-3. If no results exist from the database, say so honestly.
-4. Your goal is to gather movie preferences through clear, direct questions.
+3. If no results exist, say so honestly.
+4. Ask ONE question at a time. Wait for response.
+5. Never ask the same question twice.
+6. Keep responses SHORT (1-2 sentences max).
 
-QUESTION FLOW:
-First greeting: Say "בואו נתחיל! אשאל אותך 3 שאלות מכווינות כדי למצוא לך סרט מושלם 🎬"
+THE 3 QUESTIONS (in this order):
+1. "מה הסגנון המועדף עליך? קומדיה, אקשן, דרמה, אימה, רומנטיקה, אנימציה או משהו אחר?"
+2. "בחרת סגנון טוב! עכשיו, מאיזה שנה בערך? (לדוגמא: 2020 ומעלה, או 2015-2023)"
+3. "מעולה! עכשיו, תוכל לתת דוגמא לסרט בסגנון הזה שאהבת?"
 
-Question 1 (Genre): "מה הסגנון המועדף עליך? לדוגמא: קומדיה, אקשן, דרמה, אימה, רומנטיקה או משהו אחר?"
+After 3 answers: Give recommendations ONLY from database results.
 
-Question 2 (Year): "בחרת סגנון טוב! עכשיו, מאיזה שנה בערך? (מינימום שנה, או טווח כמו 2015-2023)"
+If user asks something off-topic: "אני כאן בשביל להמליץ על סרטים 🎬" and redirect.
 
-Question 3 (Reference): "בסדר! עכשיו, האם תוכל לתת לי דוגמא לסרט בסגנון הזה שהייתה לך אהבה אליו? (או פשוט כתוב סרט שאתה זוכר)"
-
-After 3 questions with answers: Recommend ONLY movies from the database that match the preferences.
-
-IMPORTANT:
-- Ask one clear question at a time
-- Wait for answer before proceeding
-- If user says platform (Netflix, Prime, Disney+), that's bonus info
-- Only recommend movies that are actually in the database results provided
-- Never invent movie titles
-- Keep language simple and Hebrew if user writes Hebrew
+Language: Hebrew (עברית) for Hebrew users, English for English users.
 """
 
         user_prompt = (
@@ -548,7 +539,6 @@ def chat():
         conv_state["platform"] = new_platform
 
     # Check if this is out of scope
-    # During gathering phase, be lenient - only mark off-topic if no progress AND generic movie words
     is_off_topic = False
     if conv_state["state"] == "gathering":
         # In gathering, only mark as off-topic if it's clearly not about movies
@@ -647,24 +637,6 @@ body::before {{
 @keyframes spot {{
   from {{ background-position:-500px 0, -900px 0; }}
   to {{ background-position:500px 0, 900px 0; }}
-/* אנימציית נקודות אור */
-body::after {
-  content:"";
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  background:
-    radial-gradient(circle at 10% 20%, rgba(255,209,102,.15) 0%, transparent 15%),
-    radial-gradient(circle at 90% 80%, rgba(255,48,64,.1) 0%, transparent 20%),
-    radial-gradient(circle at 50% 50%, rgba(100,200,255,.08) 0%, transparent 25%),
-    radial-gradient(circle at 20% 80%, rgba(255,150,0,.12) 0%, transparent 18%);
-  animation:glow 6s ease-in-out infinite;
-  opacity:0.8;
-}
-@keyframes glow {
-  0%,100% {{ opacity:0.6; }}
-  50% {{ opacity:0.95; }}
-}
 }}
 .marquee {{
   position:fixed;
@@ -690,15 +662,6 @@ header {{
   letter-spacing:.5px;
 }}
 .logo span {{ color:var(--red2); }}
-.badge {{
-  background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.14);
-  padding:8px 16px;
-  border-radius:999px;
-  color:var(--gold);
-  font-weight:700;
-  font-size:15px;
-}}
 .hero {{
   position:relative;
   z-index:2;
@@ -712,16 +675,11 @@ header {{
   font-weight:900;
   text-shadow:0 6px 0 rgba(215,25,32,.45), 0 0 28px rgba(255,48,64,.24);
 }}
-.hero p {{
-  margin:0 auto;
-  color:#ddd6d0;
-  font-size:clamp(18px, 2.5vw, 26px);
-}}
 .stage {{
   position:relative;
   z-index:2;
-  width:min(1120px, 92vw);
-  margin:18px auto 34px;
+  width:min(900px, 92vw);
+  margin:40px auto 34px;
   background:rgba(14,14,14,.88);
   border:1px solid rgba(255,255,255,.13);
   border-radius:28px;
@@ -756,23 +714,25 @@ header {{
   background:rgba(255,247,236,.96);
   color:#222;
   border-radius:22px;
-  height:420px;
+  height:480px;
   overflow-y:auto;
   padding:20px;
   border:5px solid rgba(215,25,32,.18);
+  margin-bottom:14px;
 }}
-.msg {{ display:flex; margin:12px 0; }}
+.msg {{ display:flex; margin:12px 0; gap:8px; }}
 .msg.user {{ justify-content:flex-start; }}
 .msg.bot {{ justify-content:flex-end; }}
 .msg.bot.has-cards {{ flex-direction:column; align-items:flex-end; }}
 .bubble {{
-  max-width:76%;
+  max-width:70%;
   padding:13px 16px;
   border-radius:20px;
   line-height:1.65;
   font-size:16px;
   box-shadow:0 6px 16px rgba(0,0,0,.08);
   white-space:pre-line;
+  word-wrap:break-word;
 }}
 .user .bubble {{ background:linear-gradient(135deg, var(--red), var(--red2)); color:#fff; border-bottom-left-radius:4px; }}
 .bot .bubble {{ background:#f2f2f2; color:#222; border-bottom-right-radius:4px; }}
@@ -804,7 +764,10 @@ header {{
   font-weight:900;
   cursor:pointer;
   box-shadow:0 10px 22px rgba(215,25,32,.35);
+  transition:.2s;
 }}
+#btn:hover {{ transform:translateY(-2px); box-shadow:0 14px 28px rgba(215,25,32,.5); }}
+#btn:active {{ transform:translateY(0); }}
 .typing {{ display:inline-flex; gap:5px; align-items:center; }}
 .dot {{ width:7px; height:7px; background:#b10e15; border-radius:50%; animation:bounce 1s infinite; }}
 .dot:nth-child(2){{animation-delay:.2s}}
@@ -815,7 +778,6 @@ header {{
 }}
 @media(max-width:720px){{
   header {{ padding:16px 18px 8px; }}
-  .badge {{ display:none; }}
   .stage {{ width:94vw; margin:30px auto; }}
   .content {{ padding:15px; }}
   .chat {{ height:420px; }}
@@ -829,34 +791,23 @@ header {{
 <div class="marquee"></div>
 <header>
   <div class="logo">🎬 <span>cinemate</span></div>
-  <div class="badge">בשיטת AI 🤖
 </header>
-
-<section class="hero">
-  <h1>סרט מושלם לחיים שלך 🍿
-  <p>שאלו על שנה, ז׳אנר, נטפליקס, סרטים דומים ועוד</p>
-</section>
 
 <main class="stage">
   <div class="stage-top">NOW SHOWING • MOVIE AGENT • NOW SHOWING</div>
   <div class="content">
-    <div class="quick-title">דוגמאות לשאלות:</div>
+    <div class="quick-title">בחר דוגמה או שאל משהו:</div>
     <div class="chips">
       <button class="chip" onclick="go('קומדיה משנת 2000')">קומדיה משנת 2000</button>
       <button class="chip" onclick="go('סרטי אקשן שקיימים בנטפליקס')">אקשן בנטפליקס</button>
-      <button class="chip" onclick="go('movies similar to Inception')">דומה ל-Inception</button>
-      <button class="chip" onclick="go('find me hidden gems')">יהלומים נסתרים</button>
-      <button class="chip" onclick="go('what are the movie clusters')">הצג קבוצות סרטים</button>
+      <button class="chip" onclick="go('סרטים דומים ל-Inception')">דומה ל-Inception</button>
+      <button class="chip" onclick="go('יהלומים נסתרים')">יהלומים נסתרים</button>
     </div>
 
-    <div id="chat" class="chat">
-      <div class="msg bot">
-        <div class="bubble">ברוכים הבאים לקולנוע החכם 🎞️ כתבו לי מה בא לכם לראות — אפשר לבקש לפי שנה, ז׳אנר או פלטפורמה כמו Netflix.</div>
-      </div>
-    </div>
+    <div id="chat" class="chat"></div>
 
     <div class="input-row">
-      <input id="inp" placeholder="לדוגמה: אהבתי Avatar ואני רוצה סרט אקשן מ-2021 ומעלה..." autocomplete="off">
+      <input id="inp" placeholder="כתוב לי מה בא לך לראות..." autocomplete="off">
       <button id="btn">שליחה</button>
     </div>
   </div>
@@ -912,19 +863,6 @@ function cards(results) {{
   return h;
 }}
 
-function clusters(list) {{
-  if(!list) return '';
-  let h = '<div class="cards">';
-  list.forEach(c => {{
-    h += `<div class="card">
-      <div class="card-title">${{esc(c.name)}}</div>
-      <div class="meta">${{esc(c.count)}} סרטים • ממוצע ${{esc(c.avg_rating)}}</div>
-      <div class="genres">${{esc(c.top_genres)}}</div>
-    </div>`;
-  }});
-  return h + '</div>';
-}}
-
 function send() {{
   const text = inp.value.trim();
   if(!text) return;
@@ -946,16 +884,12 @@ function send() {{
     rmTyping();
     convState = data.state;
     const hasResults = data.results && data.results.length > 0;
-    const hasCluster = data.intent === 'cluster_info' && data.clusters && data.clusters.length > 0;
-    // Strip markdown bold/italic that GPT sometimes adds
     const cleanReply = (data.reply || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
     let extra = '';
-    if (hasCluster) {{
-      extra = clusters(data.clusters);
-    }} else if (hasResults) {{
+    if(hasResults) {{
       extra = cards(data.results);
     }}
-    const msgClass = (hasResults || hasCluster) ? 'bot has-cards' : 'bot';
+    const msgClass = hasResults ? 'bot has-cards' : 'bot';
     add(msgClass, '<div class="bubble">' + esc(cleanReply) + '</div>' + extra);
   }})
   .catch(err => {{
