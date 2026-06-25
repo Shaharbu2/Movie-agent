@@ -601,7 +601,7 @@ def chat():
 # 11. HTML PAGE
 # ==============================================================
 
-HTML_PAGE = f"""<!DOCTYPE html>
+HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -662,8 +662,8 @@ body::after {
   opacity:0.8;
 }
 @keyframes glow {
-  0%,100% { opacity:0.6; }
-  50% { opacity:0.95; }
+  0%,100% {{ opacity:0.6; }}
+  50% {{ opacity:0.95; }}
 }
 }}
 .marquee {{
