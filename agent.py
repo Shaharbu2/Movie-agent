@@ -1289,17 +1289,21 @@ def handle_cluster_info(user_text):
 # ============================================================== 
 
 CONVERSATIONS = {}
-INTERVIEW_FIELDS = ["genre", "year", "reference_movie", "occasion", "platform"]
+
+# The agent no longer follows a rigid step-by-step form.
+# It keeps a flexible state and asks only for the most useful missing detail.
+RECOMMENDATION_SIGNALS = ["year", "reference_movie", "occasion", "platform"]
 
 
 def new_state():
     return {
-        "step": 0,
         "genre": None,
         "year": None,
+        "era": None,
         "reference_movie": None,
         "occasion": None,
         "platform": None,
+        "asked_fields": [],
         "shown_titles": [],
         "last_query": "",
         "done": False
@@ -1314,13 +1318,14 @@ def wants_reset(text):
     t = clean_text(text)
     return any(x in t for x in [
         "restart", "reset", "start over", "start again", "can we start again", "new recommendation", "new movie",
-        "התחל מחדש", "איפוס", "המלצה חדשה", "סרט חדש", "מהתחלה"
+        "התחל מחדש", "איפוס", "המלצה חדשה", "סרט חדש", "מהתחלה", "נתחיל מחדש"
     ])
 
 
 def is_none_answer(text):
     t = clean_text(text)
-    return t in ["no", "none", "skip", "dont know", "don't know", "לא", "אין", "דלג", "לא יודע", "לא יודעת"]
+    return t in ["no", "none", "skip", "dont know", "don't know", "no preference",
+                 "לא", "אין", "דלג", "לא יודע", "לא יודעת", "אין העדפה"]
 
 
 def wants_more(text):
@@ -1334,11 +1339,10 @@ def wants_more(text):
 def maybe_out_of_scope_during_interview(text):
     """
     Guardrail for clearly unrelated questions.
-    Important: this must catch short off-topic questions too, such as "מה המזג אוויר?".
-    It should NOT block normal short interview answers like "קומדיה", "דייט", "חדשים", "Netflix".
+    It catches short off-topic questions too, such as "מה המזג אוויר?".
+    It does not block normal short movie answers like "קומדיה", "דייט", "חדשים", "Netflix".
     """
     t = clean_text(text)
-
     unrelated = [
         "weather", "forecast", "temperature", "rain", "salary", "excel", "politics",
         "news", "stock", "recipe", "football", "basketball", "bank", "tax",
@@ -1346,52 +1350,163 @@ def maybe_out_of_scope_during_interview(text):
         "אקסל", "פוליטיקה", "חדשות", "מניות", "מתכון", "כדורגל", "כדורסל",
         "בנק", "מס", "מיסים", "גובה", "משקל"
     ]
+    return any(x in t for x in unrelated)
 
-    if any(x in t for x in unrelated):
+
+def friendly_out_of_scope_reply(text):
+    heb = is_hebrew(text)
+    if heb:
+        return "מצטער 😊 אני כאן כדי לעזור לך לבחור סרט 🎬 בוא נחזור לסרטים — איזה סוג סרט בא לך לראות?"
+    return "Sorry 😊 I’m here to help you choose a movie 🎬 Let’s get back to movie night — what kind of film are you looking for?"
+
+
+def smalltalk_reply(text, state):
+    heb = is_hebrew(text)
+    q = next_interview_question(state, heb)
+    if heb:
+        return f"הכול מצוין 😊 שמח שאתה כאן. {q}"
+    return f"I’m doing great 😊 Glad you’re here. {q}"
+
+
+def extract_era(text):
+    t = clean_text(text)
+    if any(x in t for x in ["new", "recent", "modern", "latest", "חדש", "חדשים", "מודרני", "מהשנים האחרונות"]):
+        return "recent"
+    if any(x in t for x in ["classic", "old", "older", "קלאסי", "קלאסיקה", "ישן", "ישנים", "קלאסיקות"]):
+        return "classic"
+    return None
+
+
+def extract_occasion(text):
+    t = clean_text(text)
+    occasion_map = [
+        ("date night", ["date", "romantic night", "דייט", "זוגי", "ערב זוגי"]),
+        ("friends night", ["friends", "party", "pajama", "חברים", "מסיבה", "פיגמות", "ערב חברים"]),
+        ("family watch", ["family", "kids", "children", "משפחה", "ילדים"]),
+        ("solo watch", ["solo", "alone", "casual", "לבד", "עצמי", "סתם", "רגוע", "צפייה לבד"]),
+        ("cozy night", ["cozy", "relaxing", "chill", "נעים", "רגוע", "בית", "ערב בבית"])
+    ]
+    for value, patterns in occasion_map:
+        if any(p in t for p in patterns):
+            return value
+    return None
+
+
+def merge_preferences_from_text(state, user_text):
+    """
+    Extract all useful movie preferences from a single user message.
+    This is what makes the agent flexible instead of a rigid form.
+    """
+    if is_none_answer(user_text):
+        return state
+
+    genres = extract_genres(user_text)
+    if genres and not state.get("genre"):
+        state["genre"] = ", ".join(genres)
+
+    year = extract_year(user_text)
+    if year and not state.get("year"):
+        state["year"] = str(year)
+
+    era = extract_era(user_text)
+    if era and not state.get("era"):
+        state["era"] = era
+
+    platform = extract_platform(user_text)
+    if platform and not state.get("platform"):
+        state["platform"] = platform
+
+    occasion = extract_occasion(user_text)
+    if occasion and not state.get("occasion"):
+        state["occasion"] = occasion
+
+    movie_title = find_movie_title(user_text)
+    if movie_title and not state.get("reference_movie"):
+        state["reference_movie"] = movie_title
+
+    return state
+
+
+def known_signal_count(state):
+    count = 0
+    if state.get("genre"):
+        count += 1
+    if state.get("year") or state.get("era"):
+        count += 1
+    if state.get("reference_movie"):
+        count += 1
+    if state.get("occasion"):
+        count += 1
+    if state.get("platform"):
+        count += 1
+    return count
+
+
+def has_enough_for_recommendation(state):
+    """
+    Do not recommend after genre only.
+    Recommend once we have genre/reference plus at least one more useful signal,
+    or any 3 meaningful signals.
+    """
+    if state.get("reference_movie") and (state.get("genre") or state.get("occasion") or state.get("platform") or state.get("year") or state.get("era")):
         return True
 
-    return False
+    if state.get("genre"):
+        extra = sum(bool(state.get(k)) for k in ["year", "era", "reference_movie", "occasion", "platform"])
+        return extra >= 1
+
+    return known_signal_count(state) >= 3
 
 
-def interview_question(step, heb=True):
-    questions_he = [
-        "מעולה 🎬 איזה ז׳אנר או סגנון בא לך? למשל אקשן, קומדיה, רומנטי, אימה או דרמה.",
-        "מאיזו תקופה תרצה את הסרט? אפשר שנה ספציפית, סרטים חדשים, או קלאסיקות ישנות.",
-        "יש סרט שאהבת ואתה רוצה משהו באותו וייב? אם אין, אפשר לכתוב: אין.",
-        "לאיזו סיטואציה זה? דייט, ערב עם חברים, משפחה, או צפייה לבד?",
-        "יש פלטפורמת צפייה מועדפת? Netflix, Disney+, Prime Video, Hulu, או שאין העדפה?"
-    ]
-    questions_en = [
-        "Great 🎬 What genre or style are you in the mood for? For example action, comedy, romance, horror, or drama.",
-        "What year or era do you prefer? A specific year, recent movies, or older classics?",
-        "Is there a movie you liked and want a similar vibe to? If not, you can write: none.",
-        "What is the viewing context? Date night, friends, family, or solo casual watch?",
-        "Do you have a preferred streaming platform? Netflix, Disney+, Prime Video, Hulu, or no preference?"
-    ]
-    qs = questions_he if heb else questions_en
-    return qs[min(step, len(qs) - 1)]
+def next_missing_field(state):
+    """
+    Dynamic priority:
+    - First get genre/vibe unless a reference movie already gives a clear direction.
+    - Then ask the most natural missing question based on what is already known.
+    """
+    if not state.get("genre") and not state.get("reference_movie"):
+        return "genre"
+
+    if not state.get("occasion") and "occasion" not in state.get("asked_fields", []):
+        return "occasion"
+
+    if not state.get("platform") and "platform" not in state.get("asked_fields", []):
+        return "platform"
+
+    if not state.get("year") and not state.get("era") and "year" not in state.get("asked_fields", []):
+        return "year"
+
+    if not state.get("reference_movie") and "reference_movie" not in state.get("asked_fields", []):
+        return "reference_movie"
+
+    return None
 
 
-def save_interview_answer(state, user_text):
-    field = INTERVIEW_FIELDS[state["step"]]
+def next_interview_question(state, heb=True):
+    field = next_missing_field(state)
+    if field:
+        state.setdefault("asked_fields", [])
+        if field not in state["asked_fields"]:
+            state["asked_fields"].append(field)
 
-    if field == "genre":
-        genres = extract_genres(user_text)
-        state[field] = ", ".join(genres) if genres else user_text.strip()
-    elif field == "year":
-        year = extract_year(user_text)
-        state[field] = str(year) if year else user_text.strip()
-    elif field == "reference_movie":
-        state[field] = None if is_none_answer(user_text) else (find_movie_title(user_text) or user_text.strip())
-    elif field == "platform":
-        platform = extract_platform(user_text)
-        state[field] = platform if platform else (None if is_none_answer(user_text) else user_text.strip())
+    if heb:
+        questions = {
+            "genre": "איזה סגנון או וייב בא לך היום? למשל קומדיה, אימה, אקשן, רומנטי או משהו קליל.",
+            "occasion": "נשמע טוב 🎬 לאיזו סיטואציה זה — דייט, חברים, משפחה או צפייה רגועה לבד?",
+            "platform": "יש פלטפורמה מועדפת לצפייה? Netflix, Disney+, Prime Video, Hulu, או שאין העדפה?",
+            "year": "בא לך משהו חדש יחסית או דווקא קלאסיקה ישנה?",
+            "reference_movie": "יש סרט שאהבת לאחרונה והיית רוצה משהו באותו וייב? אם אין, לגמרי בסדר."
+        }
+        return questions.get(field, "מעולה, יש לי כיוון טוב. רוצה שאבחר לך סרט מתאים?")
     else:
-        state[field] = user_text.strip()
-
-    state["step"] += 1
-    state["done"] = state["step"] >= len(INTERVIEW_FIELDS)
-    return state
+        questions = {
+            "genre": "What kind of vibe are you in the mood for today? Comedy, horror, action, romance, or something light?",
+            "occasion": "Nice 🎬 What’s the occasion — date night, friends, family, or a relaxed solo watch?",
+            "platform": "Do you have a preferred streaming platform? Netflix, Disney+, Prime Video, Hulu, or no preference?",
+            "year": "Are you leaning toward something recent, or more of a timeless classic?",
+            "reference_movie": "Is there a movie you recently loved and want a similar vibe to? If not, no worries."
+        }
+        return questions.get(field, "Great, I have a good direction. Want me to pick a movie for you?")
 
 
 def build_recommendation_query(state):
@@ -1401,6 +1516,10 @@ def build_recommendation_query(state):
     if state.get("year"):
         year = extract_year(str(state["year"]))
         parts.append(f"from {year}" if year else str(state["year"]))
+    elif state.get("era") == "recent":
+        parts.append("from 2020")
+    elif state.get("era") == "classic":
+        parts.append("classic older movie")
     if state.get("platform"):
         parts.append(str(state["platform"]))
     if state.get("occasion"):
@@ -1430,6 +1549,7 @@ def recommend_from_state(state, user_text):
         if title not in state["shown_titles"]:
             state["shown_titles"].append(title)
 
+    state["done"] = True
     result["interview"] = state.copy()
     return result
 
@@ -1464,21 +1584,73 @@ def call_openai(user_text, result):
             data_block = "No dataset results were found."
 
         system_prompt = """
-You are Cinemate, a friendly movie recommendation chatbot.
+You are Cinemate, a warm, witty, and highly intuitive movie recommendation expert.
 
-Important rules:
-- Act as an active, step-by-step movie discovery assistant.
-- Ask only ONE question at a time during the interview.
-- Do not recommend movies until genre/style, year/era, reference movie, viewing context, and streaming preference were collected.
-- After the interview is complete, recommendations must be based ONLY on the provided dataset results.
+Your mission is to help users discover the single best movie for their current mood through a natural, friendly, and intelligent conversation.
+
+PERSONALITY
+- Be warm, conversational, and human-like.
+- Sound like a movie-loving friend, not a questionnaire.
+- Be enthusiastic about movies.
+- Keep responses concise and engaging.
+- Never sound robotic or repetitive.
+
+SMALL TALK RULES
+- You are allowed to engage in brief small talk.
+- If the user says hello, asks how you are, or makes casual conversation, respond naturally in one short sentence.
+- After the small talk, gently guide the conversation back toward movie discovery.
+
+CONVERSATION FLOW
+- Ask only ONE question at a time.
+- Never overwhelm the user with multiple questions in the same message.
+- Listen carefully to each answer.
+- Acknowledge the user's response naturally.
+- Then ask the next most useful question.
+- Do NOT ask the same question twice.
+- Keep track of information already provided by the user.
+- If the user already answered a question, move naturally to the next missing detail.
+
+INTELLIGENT FLEXIBILITY
+- Do NOT rigidly ask all five questions every time.
+- Use your judgment.
+- If the user already provided enough information, stop interviewing.
+- Gather enough information to make a confident recommendation.
+- Do NOT recommend a movie after receiving only a genre.
+- A genre alone is NOT enough information for a recommendation.
+
+RECOMMENDATION RULES
+- Recommend ONLY ONE movie.
+- Select the single best match from the dataset results provided.
+- Never recommend multiple movies at once.
+- Never generate long ranked lists.
+- Never mention movies that are not included in the provided dataset results.
 - Never invent movie titles.
-- Never add movies that are not in the dataset results.
-- If the user asks about something unrelated, politely say that your sole purpose is helping with movie recommendations.
-- If dataset results ARE provided, present ONLY ONE movie recommendation, very briefly.
-- If no dataset results were found, say no suitable match was found and suggest changing movie name, year, genre, or platform.
-- Do NOT use markdown formatting like **bold** or *italic*.
-- Since the movie card is shown separately, do not repeat all card details. Write one short sentence and then ask if the user wants one more suitable movie.
-- Match the user's language: Hebrew if the user writes Hebrew, English if the user writes English.
+- Since movie cards are displayed separately, do NOT repeat the movie title in your response.
+- Do NOT repeat detailed movie metadata.
+- Do NOT write long plot summaries.
+- Explain briefly why this recommendation fits the user's mood.
+- Keep the explanation to 1–2 short sentences.
+- After recommending, ask if the user would like another recommendation.
+
+TYPO TOLERANCE
+- Understand common typos, slang, abbreviations, and misspellings in both English and Hebrew.
+- Never correct the user. Simply understand their intent naturally.
+
+OUT-OF-SCOPE RULES
+- You are strictly dedicated to helping users discover movies.
+- If the user asks about anything unrelated to movies, politely decline and redirect back to movie discovery.
+- Never answer the unrelated question.
+
+DATASET RULES
+- Recommendations MUST come ONLY from the dataset results provided.
+- Never invent movie titles.
+- Never recommend movies from your own knowledge.
+- If no suitable dataset result exists, explain that no strong match was found and suggest changing genre, year, platform, or reference movie.
+
+LANGUAGE RULES
+- Always respond in the user's language.
+- Hebrew user → natural Hebrew.
+- English user → natural English.
 """
 
         user_prompt = (
@@ -1527,23 +1699,24 @@ def fallback_reply(user_text, result):
     clusters = result.get("clusters", [])
 
     if intent == "interview_question":
-        return result.get("question", interview_question(0, heb))
+        return result.get("question", "איזה סגנון בא לך לראות?" if heb else "What kind of movie are you in the mood for?")
 
     if intent == "smalltalk":
         return "היי! 🎬 בוא נמצא יחד את הסרט המושלם. איזה סוג סרט בא לך לראות?" if heb else "Hi! 🎬 Let’s find the perfect movie together. What kind of movie are you in the mood for?"
 
     if intent == "out_of_scope":
-        return "מצטער, אני כאן כדי לעזור לך לבחור סרט 🎬 אפשר לספר לי איזה סגנון בא לך, שנה, פלטפורמה או סרט שאהבת." if heb else "Sorry, I’m here to help you choose a movie 🎬. Tell me what style you want, a year, a platform, or a movie you liked."
+        return friendly_out_of_scope_reply(user_text)
 
     if clusters:
         return "מצאתי את קבוצות הסרטים המרכזיות במאגר." if heb else "I found the main movie clusters in the dataset."
 
     if not results:
         return "לא מצאתי התאמה טובה בדאטה. אפשר לנסות לשנות שם סרט, שנה, ז׳אנר או פלטפורמה." if heb else "I couldn’t find a good match in the dataset. Try changing the movie name, year, genre, or platform."
-    title = results[0]["title"]
+
     if result.get("exhausted"):
-        return "אין לי עוד המלצה טובה לפי אותם פרטים. אפשר להתחיל חיפוש חדש." if heb else "I do not have another strong match for the same details. You can start a new search."
-    return f"ההמלצה שלי: {title}. רוצה שאציע עוד סרט מתאים?" if heb else f"My recommendation: {title}. Would you like one more suitable movie?"
+        return "אין לי עוד המלצה טובה לפי אותם פרטים. אפשר להתחיל חיפוש חדש." if heb else "I don’t have another strong match for the same details. You can start a new search."
+
+    return "נראה לי שמצאתי התאמה ממש טובה למה שחיפשת 🎬 רוצה שאציע עוד סרט מתאים?" if heb else "I think this is a really good match for what you described 🎬 Would you like one more suitable movie?"
 
 
 # ============================================================== 
@@ -1572,15 +1745,16 @@ def chat():
 
     state = CONVERSATIONS[key]
 
-    # Explicit restart: reset and start the guided interview again.
+    # Explicit restart: reset and start a fresh flexible interview.
     if wants_reset(user_text):
         CONVERSATIONS[key] = new_state()
-        q = interview_question(0, heb)
+        state = CONVERSATIONS[key]
+        q = next_interview_question(state, heb)
         return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": [], "reset": True})
 
     # Empty message / page ping: do not consume an interview answer.
     if not user_text:
-        q = interview_question(state.get("step", 0), heb) if not state.get("done") else (
+        q = next_interview_question(state, heb) if not state.get("done") else (
             "היי 🎬 רוצה שנתחיל חיפוש חדש או שאציע עוד סרט לפי הבחירות הקודמות?" if heb else
             "Hi 🎬 Would you like to start a new search or get one more movie based on your previous choices?"
         )
@@ -1588,64 +1762,47 @@ def chat():
 
     # Friendly small talk is allowed. It should NOT be saved as genre/year/platform.
     if is_smalltalk(user_text):
-        if not state.get("done"):
-            q = interview_question(state.get("step", 0), heb)
-            reply = (
-                "היי, שלומי מצוין 🙂 כיף שאתה כאן. נמשיך למצוא לך סרט שמתאים בול? " + q
-            ) if heb else (
-                "Hi, I’m doing great 🙂 Glad you’re here. Let’s keep finding the right movie for you. " + q
-            )
-            return jsonify({"intent": "interview_question", "reply": reply, "question": q, "results": []})
-        reply = (
+        reply = smalltalk_reply(user_text, state) if not state.get("done") else (
             "הכול טוב 🙂 רוצה שאציע עוד סרט לפי הבחירות שלך, או שנתחיל חיפוש חדש?"
-        ) if heb else (
+            if heb else
             "All good 🙂 Would you like one more movie based on your choices, or should we start a new search?"
         )
         return jsonify({"intent": "smalltalk", "reply": reply, "results": []})
 
-    # Off-topic guardrail: only block clearly unrelated questions.
+    # Off-topic guardrail.
     if maybe_out_of_scope_during_interview(user_text):
-        result = handle_out_of_scope(user_text)
-        result["reply"] = fallback_reply(user_text, result)
-        return jsonify(result)
-
-    # Guided interview mode: collect one answer at a time and ask the next question.
-    if not state.get("done"):
-        state = save_interview_answer(state, user_text)
-        CONVERSATIONS[key] = state
-
-        if not state.get("done"):
-            q = interview_question(state["step"], heb)
-            return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": []})
-
-        result = recommend_from_state(state, user_text)
-        result["reply"] = fallback_reply(user_text, result)
-        return jsonify(result)
+        return jsonify({"intent": "out_of_scope", "reply": friendly_out_of_scope_reply(user_text), "results": []})
 
     # After a recommendation, "yes / more" means one additional movie from the same query.
-    if wants_more(user_text):
+    if state.get("done") and wants_more(user_text):
         result = recommend_from_state(state, user_text)
         CONVERSATIONS[key] = state
-        result["reply"] = fallback_reply(user_text, result)
+        result["reply"] = call_openai(user_text, result)
         return jsonify(result)
 
-    # If the user says no, finish politely without forcing more questions.
-    if is_none_answer(user_text):
+    # If the user says no after a recommendation, finish politely without forcing more questions.
+    if state.get("done") and is_none_answer(user_text):
         reply = "סבבה 🎬 כשתרצה סרט חדש פשוט כתוב 'סרט חדש'." if heb else "No problem 🎬 When you want a new movie, just type 'new movie'."
         return jsonify({"intent": "smalltalk", "reply": reply, "results": []})
 
-    # If the previous interview is done and the user gives a new movie preference
-    # (for example "קומדיה"), start a NEW guided interview instead of recommending immediately.
-    if is_movie_related(user_text):
+    # If a completed conversation receives a new movie preference, start a new flexible interview.
+    if state.get("done"):
         state = new_state()
-        state = save_interview_answer(state, user_text)
         CONVERSATIONS[key] = state
-        q = interview_question(state["step"], heb)
-        return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": [], "new_interview": True})
 
-    result = handle_out_of_scope(user_text)
-    result["reply"] = fallback_reply(user_text, result)
-    return jsonify(result)
+    # Flexible interview mode:
+    # Extract any details the user already gave, then either ask the best missing question or recommend.
+    state = merge_preferences_from_text(state, user_text)
+    CONVERSATIONS[key] = state
+
+    if has_enough_for_recommendation(state):
+        result = recommend_from_state(state, user_text)
+        CONVERSATIONS[key] = state
+        result["reply"] = call_openai(user_text, result)
+        return jsonify(result)
+
+    q = next_interview_question(state, heb)
+    return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": []})
 
 
 # ==============================================================
