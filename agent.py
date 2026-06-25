@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 from collections import Counter
 from flask import Flask, request, jsonify, Response
-from datetime import datetime
 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.cluster import MiniBatchKMeans
@@ -181,8 +180,14 @@ df["anomaly_score"] = iso.decision_function(iso_scaled).astype(np.float32)
 del iso_scaled; gc.collect()
 
 # ==============================================================
-# 6. GENRE & FILTER MAPPING
+# 6. INTENT + FILTER DETECTION
 # ==============================================================
+
+SMALLTALK_PATTERNS = [
+    "hi", "hello", "hey", "good morning", "good evening", "how are you",
+    "היי", "הי", "שלום", "מה קורה", "מה נשמע", "מה שלומך",
+    "בוקר טוב", "ערב טוב", "צהריים טובים"
+]
 
 GENRE_KEYWORD_MAP = {
     "action": "Action", "אקשן": "Action", "fight": "Action", "battle": "Action",
@@ -203,6 +208,14 @@ GENRE_KEYWORD_MAP = {
     "thriller": "Thriller", "מתח": "Thriller",
 }
 
+GENRE_TO_CLUSTER = {
+    "Action": 2, "Adventure": 2, "Science Fiction": 2, "Thriller": 2,
+    "Comedy": 1, "Romance": 1,
+    "Drama": 0, "Crime": 0, "History": 0, "War": 0, "Documentary": 0,
+    "Family": 3, "Animation": 3, "Fantasy": 3,
+    "Horror": 4, "Mystery": 4,
+}
+
 PLATFORM_PATTERNS = {
     "Netflix": ["netflix", "נטפליקס"],
     "Hulu": ["hulu", "הולו"],
@@ -210,9 +223,23 @@ PLATFORM_PATTERNS = {
     "Disney+": ["disney", "דיסני", "disney+"],
 }
 
-# ==============================================================
-# 7. TEXT EXTRACTION HELPERS
-# ==============================================================
+MOVIE_WORDS = [
+    "סרט", "סרטים", "קולנוע", "נטפליקס", "דיסני", "פריים", "הולו",
+    "קומדיה", "אקשן", "אימה", "דרמה", "רומנטי", "רומנטיקה", "מתח",
+    "אנימציה", "ילדים", "פנטזיה", "מדע בדיוני", "דומה", "כמו",
+    "המלצה", "תמליץ", "לראות", "צפייה", "דירוג", "שנה",
+    "movie", "movies", "film", "films", "cinema", "netflix", "hulu",
+    "prime", "disney", "comedy", "action", "horror", "drama", "romance",
+    "thriller", "animation", "similar", "like", "recommend", "rating", "year"
+]
+
+
+def is_smalltalk(text):
+    t = clean_text(text)
+    if not t:
+        return True
+    return any(p in t for p in SMALLTALK_PATTERNS) and not any(w in t for w in MOVIE_WORDS)
+
 
 def extract_genres(text):
     t = text.lower()
@@ -222,9 +249,16 @@ def extract_genres(text):
             matched.add(GENRE_KEYWORD_MAP[kw])
     return list(matched)
 
+
+def genres_to_clusters(genres):
+    return {GENRE_TO_CLUSTER[g] for g in genres if g in GENRE_TO_CLUSTER}
+
+
 def extract_year(text):
+    # \b fails on "מ2006" (Hebrew letter before digit), so use lookahead/lookbehind instead
     m = re.search(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", text)
     return int(m.group(1)) if m else None
+
 
 def extract_platform(text):
     t = text.lower()
@@ -233,15 +267,19 @@ def extract_platform(text):
             return platform
     return None
 
+
 def find_movie_title(user_text):
     """Find a movie title in user input with exact and fuzzy matching."""
     text_clean = clean_title(user_text)
+
+    # Vectorized exact containment: prefer longest matched title
     mask = df["title_clean"].apply(lambda tc: bool(tc) and tc in text_clean)
     hits = df[mask]
     if not hits.empty:
         best_idx = hits["title_clean"].str.len().idxmax()
         return df.loc[best_idx, "title"]
 
+    # Try extracting after common phrases
     patterns = [
         r"similar to (.+)",
         r"movies like (.+)",
@@ -281,9 +319,55 @@ def find_movie_title(user_text):
 
     return None
 
-# ==============================================================
-# 8. RECOMMENDATION ENGINE
-# ==============================================================
+
+def is_movie_related(text):
+    t = clean_text(text)
+    if is_smalltalk(t):
+        return True
+    if extract_year(t) or extract_platform(t) or extract_genres(t):
+        return True
+    if find_movie_title(text):
+        return True
+    return any(w in t for w in MOVIE_WORDS)
+
+
+def detect_intent(text):
+    t = clean_text(text)
+
+    if is_smalltalk(text):
+        return "smalltalk", text
+
+    if any(k in t for k in [
+        "unusual", "anomaly", "outlier", "flop", "hidden gem", "underrated",
+        "פלופ", "יהלום נסתר", "חריג", "חריגות", "מוזר", "מוערך בחסר",
+        "ארוך", "קצר"
+    ]):
+        return "anomaly", text
+
+    if any(k in t for k in ["cluster", "clusters", "קלסטר", "קלאסטר", "קבוצה", "סוגי סרטים"]):
+        return "cluster_info", text
+
+    movie_title = find_movie_title(text)
+    if movie_title and any(k in t for k in ["similar", "like", "דומה", "כמו", "אהבתי"]):
+        return "similar", movie_title
+
+    return "search", text
+
+
+def apply_filters(base_df, text):
+    filtered = base_df.copy()
+    year = extract_year(text)
+    platform = extract_platform(text)
+
+    if year is not None:
+        # Year means "from this year and above"
+        filtered = filtered[filtered["release_year"] >= year]
+
+    if platform is not None and platform in filtered.columns:
+        filtered = filtered[filtered[platform] == 1]
+
+    return filtered, year, platform
+
 
 def get_streaming(row):
     platforms = []
@@ -295,7 +379,8 @@ def get_streaming(row):
         platforms.append("Prime Video")
     if row.get("Disney+", 0) == 1:
         platforms.append("Disney+")
-    return ", ".join(platforms) if platforms else "לא זמין במאגר"
+    return ", ".join(platforms)
+
 
 def row_to_result(rank, idx, score=0):
     row = df.loc[int(idx)]
@@ -311,140 +396,293 @@ def row_to_result(rank, idx, score=0):
         "streaming": get_streaming(row)
     }
 
-def search_movies(user_preferences, top_n=2):
-    """Search for movies based on collected preferences"""
-    filtered = df.copy()
-    
-    genres = user_preferences.get("genres", [])
-    year = user_preferences.get("year")
-    platform = user_preferences.get("platform")
 
-    if year is not None:
-        filtered = filtered[filtered["release_year"] >= year]
+def empty_result(intent="search", **extra):
+    result = {"intent": intent, "reply": "", "results": []}
+    result.update(extra)
+    return result
 
-    if platform is not None and platform in filtered.columns:
-        filtered = filtered[filtered[platform] == 1]
+# ==============================================================
+# 7. HANDLERS - max 3 results
+# ==============================================================
 
-    if genres:
-        pattern = "|".join(genres)
+def handle_smalltalk(user_text):
+    return empty_result("smalltalk")
+
+
+def handle_out_of_scope(user_text):
+    return empty_result("out_of_scope")
+
+
+def handle_search(user_text, top_n=3):
+    if not is_movie_related(user_text):
+        return handle_out_of_scope(user_text)
+
+    filtered, year, platform = apply_filters(df, user_text)
+
+    matched_genres = extract_genres(user_text)
+    matched_clusters = genres_to_clusters(matched_genres)
+
+    if matched_genres:
+        pattern = "|".join(matched_genres)
         filtered = filtered[filtered["genres"].str.contains(pattern, case=False, na=False)]
 
     if filtered.empty:
-        return []
+        return empty_result("search", year=year, platform=platform, genres=matched_genres)
 
-    # Score by quality
-    filtered = filtered.copy()
-    filtered["score"] = (
-        filtered["vote_average"] * 0.5 +
-        (filtered["vote_count"] / filtered["vote_count"].max()) * 50 * 0.3 +
-        (filtered["popularity"] / filtered["popularity"].max()) * 50 * 0.2
-    )
+    cleaned = clean_text(user_text)
 
-    top = filtered.nlargest(top_n, "score")
-    
+    user_vec = tfidf.transform([cleaned])
+    tfidf_scores_all = cosine_similarity(user_vec, tfidf_matrix).flatten()
+
+    indices = filtered.index.to_numpy()
+
+    def genre_score(gs):
+        if not matched_genres:
+            return 0.0
+        movie_genres = [g.strip() for g in str(gs).split(",")]
+        return sum(1 for g in matched_genres if g in movie_genres) / max(len(matched_genres), 1)
+
+    genre_scores = filtered["genres"].apply(genre_score).values
+    cluster_scores = filtered["cluster"].apply(lambda c: 1.0 if c in matched_clusters else 0.0).values
+    tfidf_scores = tfidf_scores_all[indices]
+
+    combined = 0.50 * tfidf_scores + 0.30 * genre_scores + 0.20 * cluster_scores
+
+    has_clear_filter = bool(year or platform or matched_genres)
+    best_score = float(combined.max()) if len(combined) else 0.0
+
+    if not has_clear_filter and best_score < 0.08:
+        return empty_result("search", year=year, platform=platform, genres=matched_genres)
+
+    # With filters but no TF-IDF signal: only return if genre/cluster score is meaningful
+    if has_clear_filter and best_score < 0.05 and not matched_genres:
+        return empty_result("search", year=year, platform=platform, genres=matched_genres)
+
+    if has_clear_filter and best_score == 0 and matched_genres:
+        # Genre filter matched rows but no TF-IDF overlap — rank by quality
+        ranked = filtered.sort_values(["vote_average", "vote_count", "popularity"], ascending=False).head(top_n)
+        if ranked.empty:
+            return empty_result("search", year=year, platform=platform, genres=matched_genres)
+
+        results = [
+            row_to_result(i + 1, idx, round(float(row["vote_average"]) / 10, 3))
+            for i, (idx, row) in enumerate(ranked.iterrows())
+        ]
+    else:
+        order = combined.argsort()[-top_n:][::-1]
+        chosen = [pos for pos in order if combined[pos] >= max(0.04, best_score * 0.25)]
+
+        if not chosen:
+            return empty_result("search", year=year, platform=platform, genres=matched_genres)
+
+        results = [row_to_result(i + 1, indices[pos], combined[pos]) for i, pos in enumerate(chosen[:top_n])]
+
+    return {
+        "intent": "search",
+        "reply": "",
+        "results": results,
+        "genres": matched_genres,
+        "year": year,
+        "platform": platform
+    }
+
+
+def handle_similar(movie_title, user_text, top_n=3):
+    matches = df[df["title"].str.lower() == str(movie_title).lower()]
+
+    if matches.empty:
+        matches = df[df["title"].str.lower().str.contains(str(movie_title).lower(), na=False)]
+
+    if matches.empty:
+        return empty_result("similar")
+
+    idx = int(matches.index[0])
+    found = df.loc[idx, "title"]
+
+    # Compute similarity for just one row vs all — avoids building full NxN matrix
+    scores = cosine_similarity(sim_data_sparse[idx:idx+1], sim_data_sparse).flatten()
+    scores[idx] = -1
+
+    candidates = df.copy()
+    candidates["similarity_score"] = scores
+    candidates = candidates[candidates.index != idx]
+
+    candidates, year, platform = apply_filters(candidates, user_text)
+
+    matched_genres = extract_genres(user_text)
+    if matched_genres:
+        pattern = "|".join(matched_genres)
+        candidates = candidates[candidates["genres"].str.contains(pattern, case=False, na=False)]
+
+    if candidates.empty:
+        return empty_result("similar", year=year, platform=platform, genres=matched_genres, reference_movie=found)
+
+    # Do not return weak/random results
+    candidates = candidates[candidates["similarity_score"] >= 0.05]
+
+    if candidates.empty:
+        return empty_result("similar", year=year, platform=platform, genres=matched_genres, reference_movie=found)
+
+    top_results = candidates.sort_values("similarity_score", ascending=False).head(top_n)
+
     results = [
-        row_to_result(i + 1, idx, row["score"])
-        for i, (idx, row) in enumerate(top.iterrows())
+        row_to_result(i + 1, tidx, row["similarity_score"])
+        for i, (tidx, row) in enumerate(top_results.iterrows())
     ]
-    
-    return results
+
+    return {
+        "intent": "similar",
+        "reply": "",
+        "results": results,
+        "genres": matched_genres,
+        "year": year,
+        "platform": platform,
+        "reference_movie": found
+    }
+
+
+def handle_anomaly(user_text, top_n=3):
+    filtered, year, platform = apply_filters(df, user_text)
+
+    matched_genres = extract_genres(user_text)
+    if matched_genres:
+        pattern = "|".join(matched_genres)
+        filtered = filtered[filtered["genres"].str.contains(pattern, case=False, na=False)]
+
+    anomalies = filtered[filtered["anomaly"] == -1].copy()
+
+    if anomalies.empty:
+        return empty_result("anomaly", year=year, platform=platform, genres=matched_genres)
+
+    t = clean_text(user_text)
+
+    if any(k in t for k in ["flop", "פלופ", "budget", "תקציב"]):
+        subset = anomalies[(anomalies["vote_average"] < 5.5) & (anomalies["popularity"] > anomalies["popularity"].median())]
+        anomaly_type = "flop"
+    elif any(k in t for k in ["hidden gem", "יהלום נסתר", "underrated", "מוערך בחסר"]):
+        subset = anomalies[(anomalies["vote_average"] >= 7.5) & (anomalies["vote_count"] < anomalies["vote_count"].quantile(0.45))]
+        anomaly_type = "hidden_gem"
+    elif any(k in t for k in ["long", "ארוך", "runtime"]):
+        subset = anomalies[anomalies["runtime"] > 180]
+        anomaly_type = "long_runtime"
+    elif any(k in t for k in ["short", "קצר", "runtime"]):
+        subset = anomalies[anomalies["runtime"] < 60]
+        anomaly_type = "short_runtime"
+    else:
+        subset = anomalies.sort_values("anomaly_score").head(top_n)
+        anomaly_type = "general"
+
+    if subset.empty:
+        return empty_result("anomaly", year=year, platform=platform, genres=matched_genres, anomaly_type=anomaly_type)
+
+    subset = subset.head(top_n)
+
+    results = [
+        row_to_result(i + 1, idx, row["anomaly_score"])
+        for i, (idx, row) in enumerate(subset.iterrows())
+    ]
+
+    return {
+        "intent": "anomaly",
+        "reply": "",
+        "results": results,
+        "genres": matched_genres,
+        "year": year,
+        "platform": platform,
+        "anomaly_type": anomaly_type
+    }
+
+
+def handle_cluster_info(user_text):
+    summary = []
+    for c, name in CLUSTER_NAMES.items():
+        subset = df[df["cluster"] == c]
+        all_g = ", ".join(subset["genres"].dropna()).split(", ")
+        top_g = [g for g, _ in Counter(all_g).most_common(3) if g]
+        summary.append({
+            "cluster": int(c),
+            "name": name,
+            "count": int(len(subset)),
+            "top_genres": ", ".join(top_g),
+            "avg_rating": round(float(subset["vote_average"].mean()), 2)
+        })
+
+    return {"intent": "cluster_info", "reply": "", "clusters": summary, "results": []}
 
 # ==============================================================
-# 9. CONVERSATION STATE & OPENAI INTEGRATION
+# 8. OPENAI RESPONSE - friendly wording only
 # ==============================================================
 
-def build_conversation_context(conv_state):
-    """Build context string from conversation state"""
-    parts = []
-    if conv_state.get("genres"):
-        parts.append(f"ז׳אנרים: {', '.join(conv_state['genres'])}")
-    if conv_state.get("year"):
-        parts.append(f"שנה: מ-{conv_state['year']} ומעלה")
-    if conv_state.get("platform"):
-        parts.append(f"פלטפורמה: {conv_state['platform']}")
-    return " | ".join(parts) if parts else "עדיין לא נאספו העדפות"
-
-def call_openai(user_text, conv_state, results=None):
-    """Call OpenAI for conversational response."""
+def call_openai(user_text, result):
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        return fallback_reply(user_text, conv_state, results)
+        return fallback_reply(user_text, result)
 
     try:
         import urllib.request
 
         language = "Hebrew" if is_hebrew(user_text) else "English"
-        state = conv_state.get("state", "greeting")
-        questions_asked = conv_state.get("questions_asked", 0)
-        
-        # Build data block - ONLY from database results
+        intent = result.get("intent", "search")
+        results = result.get("results", [])
+        clusters = result.get("clusters", [])
+
         data_block = ""
+
         if results:
-            for r in results[:2]:
+            for r in results[:3]:
+                streaming = r.get("streaming") or "Not available in streaming dataset"
                 data_block += (
-                    f"- {r['title']} ({r['year']}), ז׳אנרים: {r['genres']}, "
-                    f"דירוג: {r['rating']}/10, זמין ב: {r['streaming']}\n"
+                    f"- {r['title']} ({r['year']}), genres: {r['genres']}, "
+                    f"rating: {r['rating']}/10, streaming: {streaming}, score: {r['score']}\n"
                 )
-        
-        collected = build_conversation_context(conv_state)
+        elif clusters:
+            for c in clusters:
+                data_block += (
+                    f"- Cluster {c['cluster']}: {c['name']}, count: {c['count']}, "
+                    f"top genres: {c['top_genres']}, avg rating: {c['avg_rating']}\n"
+                )
+        else:
+            data_block = "No dataset results were found."
 
         system_prompt = """
-You are MovieMate, a friendly and conversational movie recommendation AI.
+You are MovieMate, a friendly movie recommendation chatbot.
 
-YOUR JOB: Ask exactly 3 questions to understand the user's movie preferences, then recommend movies.
+Important rules:
+- You are allowed to speak naturally and warmly.
+- You may answer greetings and small talk normally, then invite the user to ask for a movie recommendation.
+- You are only allowed to help with movies, movie recommendations, genres, years, ratings, streaming platforms, similar movies, clusters, and anomaly detection in the movie dataset.
+- If the user asks about something unrelated, politely say that you are focused on movie recommendations and invite them to ask about movies.
+- Recommendations must be based ONLY on the provided dataset results.
+- Do not invent movie titles.
+- Do not add movies that are not in the dataset results.
+- CRITICAL: If dataset results ARE provided, you MUST present them as recommendations. Never say "no results found" or "I couldn't find" when results are listed above.
+- If no dataset results were found (the list says "No dataset results were found"), ONLY THEN say no suitable match was found and suggest changing the movie name, year, genre, or platform.
+- Write only ONE answer. Do not duplicate sections.
+- Do NOT use markdown formatting like **bold** or *italic* — write plain text only.
+- Since movie cards are shown separately, do NOT list the movie titles one by one in your text. Just write 1-2 sentences introducing the recommendations naturally, then stop.
+- Match the user's language: Hebrew if the user writes Hebrew, English if the user writes English.
+- Keep the answer friendly, concise, and useful.
 
-CRITICAL RULES:
-1. You ONLY recommend movies from the provided database results.
-2. You NEVER invent, imagine, or suggest movies that are not in the results.
-3. If no results exist, say so honestly.
-4. Ask ONE question at a time. Wait for response.
-5. Never ask the same question twice.
-6. Keep responses SHORT (1-2 sentences max).
-
-THE 3 QUESTIONS (in this order):
-1. "מה הסגנון המועדף עליך? קומדיה, אקשן, דרמה, אימה, רומנטיקה, אנימציה או משהו אחר?"
-2. "בחרת סגנון טוב! עכשיו, מאיזה שנה בערך? (לדוגמא: 2020 ומעלה, או 2015-2023)"
-3. "מעולה! עכשיו, תוכל לתת דוגמא לסרט בסגנון הזה שאהבת?"
-
-After 3 answers: Give recommendations ONLY from database results.
-
-If user asks something off-topic: "אני כאן בשביל להמליץ על סרטים 🎬" and redirect.
-
-Language: Hebrew (עברית) for Hebrew users, English for English users.
+Anomaly rules:
+- Mention anomalies only if intent is anomaly.
+- If intent is anomaly, explain briefly what kind of anomaly was checked: hidden gem, flop, long runtime, short runtime, or unusual movie.
 """
 
         user_prompt = (
-            f"User language: {language}\n"
-            f"Conversation state: {state}\n"
+            f"Answer language: {language}\n"
             f"User message: {user_text}\n"
-            f"Questions already asked: {questions_asked}\n"
-            f"Collected preferences: {collected}\n\n"
+            f"Detected intent: {intent}\n"
+            f"Detected year filter: {result.get('year')}\n"
+            f"Detected platform filter: {result.get('platform')}\n"
+            f"Detected genres: {result.get('genres')}\n"
+            f"Reference movie: {result.get('reference_movie')}\n"
+            f"Anomaly type: {result.get('anomaly_type')}\n\n"
+            f"Dataset results:\n{data_block}\n\n"
+            "Write the final response to the user. "
+            "If there are dataset results, mention the titles and why they fit. "
+            "If there are no dataset results, do not list movies."
         )
-        
-        if state == "greeting":
-            user_prompt += (
-                "This is the FIRST message. The user just opened the chat.\n"
-                "Greet them warmly in Hebrew and say you'll ask 3 focused questions to find them the perfect movie.\n"
-                "Then ask Question 1: What's their favorite genre?"
-            )
-        elif state == "gathering":
-            user_prompt += (
-                f"You've already asked {questions_asked} questions.\n"
-                f"Current info: {collected}\n"
-                f"Ask Question {questions_asked + 1} next.\n"
-                "Be clear and direct. Ask only ONE question. Wait for their answer."
-            )
-        elif state == "ready":
-            user_prompt += (
-                f"You have enough info to recommend movies:\n{collected}\n"
-                f"Database results to present:\n{data_block if data_block else 'No movies found in database with these criteria.'}\n"
-                "Present ONLY these database results. Never invent movies. If no results, say honestly."
-            )
-        elif state == "out_of_scope":
-            user_prompt += (
-                "The user asked something not related to movie recommendations.\n"
-                "Politely but firmly explain you're focused on movie recommendations only and redirect them back."
-            )
 
         payload = {
             "model": "gpt-4o-mini",
@@ -452,8 +690,8 @@ Language: Hebrew (עברית) for Hebrew users, English for English users.
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "max_tokens": 150,
-            "temperature": 0.5
+            "max_tokens": 260,
+            "temperature": 0.45
         }
 
         req = urllib.request.Request(
@@ -472,131 +710,87 @@ Language: Hebrew (עברית) for Hebrew users, English for English users.
 
     except Exception as e:
         print("OpenAI error:", str(e))
-        return fallback_reply(user_text, conv_state, results)
+        return fallback_reply(user_text, result)
 
-def fallback_reply(user_text, conv_state, results=None):
+
+def fallback_reply(user_text, result):
     heb = is_hebrew(user_text)
-    state = conv_state.get("state", "greeting")
-    
-    if state == "greeting":
-        return "היי! 👋 אני כאן כדי לעזור לך למצוא סרט מדהים 🎬\nבואו נתחיל - איזה סוג סרט אתה אוהב?" if heb else "Hey! 👋 I'm here to help you find an amazing movie 🎬\nLet's start - what kind of movies do you enjoy?"
-    
-    if state == "out_of_scope":
-        return "אני כאן בשביל להמליץ על סרטים 🎬 בואו נחזור לשיחה על סרטים!" if heb else "I'm here to help with movie recommendations 🎬. Let's get back to finding you a great movie!"
-    
-    if state == "ready" and results:
-        titles = ", ".join([r["title"] for r in results[:2]])
-        return f"הנה ההמלצות שלי: {titles}" if heb else f"Here are my picks: {titles}"
-    
-    return "בואו נמשיך לדבר על סרטים 🎬" if heb else "Let's keep talking about movies 🎬"
+    intent = result.get("intent")
+    results = result.get("results", [])
+    clusters = result.get("clusters", [])
+
+    if intent == "smalltalk":
+        return "היי! 🎬 אני כאן כדי לעזור לך למצוא סרט מעולה. איזה סוג סרט בא לך לראות?" if heb else "Hi! 🎬 I’m here to help you find a great movie. What kind of movie are you looking for?"
+
+    if intent == "out_of_scope":
+        return "אני כאן כדי לעזור בהמלצות סרטים 🎬 אפשר לשאול אותי על ז׳אנר, שנה, פלטפורמה או סרטים דומים." if heb else "I’m here to help with movie recommendations 🎬. You can ask me about genres, years, platforms, or similar movies."
+
+    if clusters:
+        return "מצאתי את קבוצות הסרטים המרכזיות במאגר." if heb else "I found the main movie clusters in the dataset."
+
+    if not results:
+        return "לא מצאתי התאמה טובה בדאטה. אפשר לנסות לשנות שם סרט, שנה, ז׳אנר או פלטפורמה." if heb else "I couldn’t find a good match in the dataset. Try changing the movie name, year, genre, or platform."
+
+    titles = ", ".join([r["title"] for r in results[:3]])
+    return f"מצאתי כמה סרטים שיכולים להתאים: {titles}." if heb else f"I found a few movies that may fit: {titles}."
 
 # ==============================================================
-# 10. ROUTES
+# 9. ROUTES
 # ==============================================================
 
 @app.route("/")
 def index():
     return Response(HTML_PAGE, mimetype="text/html")
 
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "movies": int(len(df))})
+
 
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json() or {}
     user_text = normalize_user_text(data.get("message", ""))
-    conv_state = data.get("state", {
-        "state": "greeting",
-        "genres": [],
-        "year": None,
-        "platform": None,
-        "questions_asked": 0
-    })
 
     if not user_text:
-        return jsonify({
-            "reply": "?",
-            "state": conv_state,
-            "results": []
-        })
+        result = handle_smalltalk(user_text)
+        result["reply"] = call_openai(user_text, result)
+        return jsonify(result)
 
-    # Extract any new preferences from user message
-    new_genres = extract_genres(user_text)
-    new_year = extract_year(user_text)
-    new_platform = extract_platform(user_text)
+    intent, payload = detect_intent(user_text)
 
-    # Update state with new info
-    if new_genres:
-        for g in new_genres:
-            if g not in conv_state["genres"]:
-                conv_state["genres"].append(g)
-    
-    if new_year and not conv_state["year"]:
-        conv_state["year"] = new_year
-    
-    if new_platform and not conv_state["platform"]:
-        conv_state["platform"] = new_platform
+    if intent == "smalltalk":
+        result = handle_smalltalk(user_text)
 
-    # Check if this is out of scope
-    is_off_topic = False
-    if conv_state["state"] == "gathering":
-        # In gathering, only mark as off-topic if it's clearly not about movies
-        is_off_topic = not any([
-            new_genres, new_year, new_platform,
-            len(clean_text(user_text)) < 30,  # Short responses are assumed to be answering questions
-            any(w in clean_text(user_text) for w in ["סרט", "movie", "film", "netflix", "nflx", "prime", "disney", "הולו"])
-        ])
+    elif not is_movie_related(user_text):
+        result = handle_out_of_scope(user_text)
+
+    elif intent == "similar":
+        result = handle_similar(payload, user_text)
+
+    elif intent == "anomaly":
+        result = handle_anomaly(user_text)
+
+    elif intent == "cluster_info":
+        result = handle_cluster_info(user_text)
+
     else:
-        is_off_topic = not any([
-            new_genres, new_year, new_platform,
-            any(w in clean_text(user_text) for w in ["סרט", "movie", "film", "watch", "recommend", "like", "כמו", "אהבתי"]),
-            conv_state["state"] == "greeting"
-        ])
+        result = handle_search(user_text)
 
-    # Determine next state
-    if conv_state["state"] == "greeting":
-        conv_state["state"] = "gathering"
-        conv_state["questions_asked"] = 1
-    elif conv_state["state"] == "gathering":
-        conv_state["questions_asked"] += 1
-        # Only go to ready after exactly 3 questions AND got some preference info
-        if conv_state["questions_asked"] >= 3 and (conv_state["genres"] or conv_state["year"] or conv_state["platform"]):
-            conv_state["state"] = "ready"
-
-    if is_off_topic and conv_state["state"] != "greeting":
-        conv_state["state"] = "out_of_scope"
-    elif conv_state["state"] == "out_of_scope" and (new_genres or new_year or new_platform):
-        conv_state["state"] = "gathering"
-
-    # Get recommendations if ready
-    results = []
-    if conv_state["state"] == "ready":
-        results = search_movies({
-            "genres": conv_state["genres"],
-            "year": conv_state["year"],
-            "platform": conv_state["platform"]
-        }, top_n=2)
-
-    # Get OpenAI response
-    reply = call_openai(user_text, conv_state, results)
-
-    return jsonify({
-        "reply": reply,
-        "state": conv_state,
-        "results": results
-    })
+    result["reply"] = call_openai(user_text, result)
+    return jsonify(result)
 
 # ==============================================================
-# 11. HTML PAGE
+# 10. HTML - compact cinema style
 # ==============================================================
 
-HTML_PAGE = r"""<!DOCTYPE html>
+HTML_PAGE = f"""<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>cinemate</title>
+<title>צ׳אטבוט סרטים</title>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
 :root {{
@@ -662,6 +856,15 @@ header {{
   letter-spacing:.5px;
 }}
 .logo span {{ color:var(--red2); }}
+.badge {{
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.14);
+  padding:8px 16px;
+  border-radius:999px;
+  color:var(--gold);
+  font-weight:700;
+  font-size:15px;
+}}
 .hero {{
   position:relative;
   z-index:2;
@@ -675,11 +878,16 @@ header {{
   font-weight:900;
   text-shadow:0 6px 0 rgba(215,25,32,.45), 0 0 28px rgba(255,48,64,.24);
 }}
+.hero p {{
+  margin:0 auto;
+  color:#ddd6d0;
+  font-size:clamp(18px, 2.5vw, 26px);
+}}
 .stage {{
   position:relative;
   z-index:2;
-  width:min(900px, 92vw);
-  margin:40px auto 34px;
+  width:min(1120px, 92vw);
+  margin:18px auto 34px;
   background:rgba(14,14,14,.88);
   border:1px solid rgba(255,255,255,.13);
   border-radius:28px;
@@ -714,25 +922,23 @@ header {{
   background:rgba(255,247,236,.96);
   color:#222;
   border-radius:22px;
-  height:480px;
+  height:420px;
   overflow-y:auto;
   padding:20px;
   border:5px solid rgba(215,25,32,.18);
-  margin-bottom:14px;
 }}
-.msg {{ display:flex; margin:12px 0; gap:8px; }}
+.msg {{ display:flex; margin:12px 0; }}
 .msg.user {{ justify-content:flex-start; }}
 .msg.bot {{ justify-content:flex-end; }}
 .msg.bot.has-cards {{ flex-direction:column; align-items:flex-end; }}
 .bubble {{
-  max-width:70%;
+  max-width:76%;
   padding:13px 16px;
   border-radius:20px;
   line-height:1.65;
   font-size:16px;
   box-shadow:0 6px 16px rgba(0,0,0,.08);
   white-space:pre-line;
-  word-wrap:break-word;
 }}
 .user .bubble {{ background:linear-gradient(135deg, var(--red), var(--red2)); color:#fff; border-bottom-left-radius:4px; }}
 .bot .bubble {{ background:#f2f2f2; color:#222; border-bottom-right-radius:4px; }}
@@ -743,7 +949,7 @@ header {{
 .genres {{ font-size:13px; color:#7a4b00; font-weight:700; margin-bottom:5px; }}
 .desc {{ color:#444; font-size:13px; line-height:1.45; }}
 .stream {{ margin-top:6px; color:#111; font-size:13px; font-weight:800; }}
-.input-row {{ display:flex; gap:10px; }}
+.input-row {{ display:flex; gap:10px; margin-top:14px; }}
 #inp {{
   flex:1;
   border:none;
@@ -764,10 +970,7 @@ header {{
   font-weight:900;
   cursor:pointer;
   box-shadow:0 10px 22px rgba(215,25,32,.35);
-  transition:.2s;
 }}
-#btn:hover {{ transform:translateY(-2px); box-shadow:0 14px 28px rgba(215,25,32,.5); }}
-#btn:active {{ transform:translateY(0); }}
 .typing {{ display:inline-flex; gap:5px; align-items:center; }}
 .dot {{ width:7px; height:7px; background:#b10e15; border-radius:50%; animation:bounce 1s infinite; }}
 .dot:nth-child(2){{animation-delay:.2s}}
@@ -778,10 +981,11 @@ header {{
 }}
 @media(max-width:720px){{
   header {{ padding:16px 18px 8px; }}
-  .stage {{ width:94vw; margin:30px auto; }}
+  .badge {{ display:none; }}
+  .stage {{ width:94vw; }}
   .content {{ padding:15px; }}
-  .chat {{ height:420px; }}
-  .bubble,.cards {{ max-width:90%; }}
+  .chat {{ height:390px; }}
+  .bubble,.cards {{ max-width:94%; }}
   .input-row {{ flex-direction:column; }}
   #btn {{ padding:13px; }}
 }}
@@ -790,24 +994,35 @@ header {{
 <body>
 <div class="marquee"></div>
 <header>
-  <div class="logo">🎬 <span>cinemate</span></div>
+  <div class="logo">🎬 צ׳אטבוט <span>סרטים</span></div>
+  <div class="badge">מבוסס AI + {len(df):,} סרטים</div>
 </header>
+
+<section class="hero">
+  <h1>מחפשים את הסרט המושלם? 🍿</h1>
+  <p>שאלו על שנה, ז׳אנר, נטפליקס, סרטים דומים ועוד</p>
+</section>
 
 <main class="stage">
   <div class="stage-top">NOW SHOWING • MOVIE AGENT • NOW SHOWING</div>
   <div class="content">
-    <div class="quick-title">בחר דוגמה או שאל משהו:</div>
+    <div class="quick-title">דוגמאות לשאלות:</div>
     <div class="chips">
       <button class="chip" onclick="go('קומדיה משנת 2000')">קומדיה משנת 2000</button>
       <button class="chip" onclick="go('סרטי אקשן שקיימים בנטפליקס')">אקשן בנטפליקס</button>
-      <button class="chip" onclick="go('סרטים דומים ל-Inception')">דומה ל-Inception</button>
-      <button class="chip" onclick="go('יהלומים נסתרים')">יהלומים נסתרים</button>
+      <button class="chip" onclick="go('movies similar to Inception')">דומה ל-Inception</button>
+      <button class="chip" onclick="go('find me hidden gems')">יהלומים נסתרים</button>
+      <button class="chip" onclick="go('what are the movie clusters')">הצג קבוצות סרטים</button>
     </div>
 
-    <div id="chat" class="chat"></div>
+    <div id="chat" class="chat">
+      <div class="msg bot">
+        <div class="bubble">ברוכים הבאים לקולנוע החכם 🎞️ כתבו לי מה בא לכם לראות — אפשר לבקש לפי שנה, ז׳אנר או פלטפורמה כמו Netflix.</div>
+      </div>
+    </div>
 
     <div class="input-row">
-      <input id="inp" placeholder="כתוב לי מה בא לך לראות..." autocomplete="off">
+      <input id="inp" placeholder="לדוגמה: אהבתי Avatar ואני רוצה סרט אקשן מ-2021 ומעלה..." autocomplete="off">
       <button id="btn">שליחה</button>
     </div>
   </div>
@@ -818,19 +1033,11 @@ const chat = document.getElementById('chat');
 const inp = document.getElementById('inp');
 const btn = document.getElementById('btn');
 
-let convState = {{
-  state: 'greeting',
-  genres: [],
-  year: null,
-  platform: null,
-  questions_asked: 0
-}};
-
-function esc(s) {{
+function esc(s){{
   return String(s || '').replace(/[&<>"']/g, m => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m]));
 }}
 
-function add(role, html) {{
+function add(role, html){{
   const d = document.createElement('div');
   d.className = 'msg ' + role;
   d.innerHTML = html;
@@ -838,16 +1045,16 @@ function add(role, html) {{
   chat.scrollTop = chat.scrollHeight;
 }}
 
-function addTyping() {{
+function addTyping(){{
   add('bot', '<div class="bubble" id="typing"><span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span></div>');
 }}
 
-function rmTyping() {{
+function rmTyping(){{
   const t = document.getElementById('typing');
   if(t) t.parentElement.remove();
 }}
 
-function cards(results) {{
+function cards(results){{
   if(!results || !results.length) return '';
   let h = '<div class="cards">';
   results.forEach(r => {{
@@ -863,10 +1070,22 @@ function cards(results) {{
   return h;
 }}
 
-function send() {{
+function clusters(list){{
+  if(!list) return '';
+  let h = '<div class="cards">';
+  list.forEach(c => {{
+    h += `<div class="card">
+      <div class="card-title">${{esc(c.name)}}</div>
+      <div class="meta">${{esc(c.count)}} סרטים • ממוצע ${{esc(c.avg_rating)}}</div>
+      <div class="genres">${{esc(c.top_genres)}}</div>
+    </div>`;
+  }});
+  return h + '</div>';
+}}
+
+function send(){{
   const text = inp.value.trim();
   if(!text) return;
-  
   add('user', '<div class="bubble">' + esc(text) + '</div>');
   inp.value = '';
   addTyping();
@@ -874,62 +1093,45 @@ function send() {{
   fetch('/chat', {{
     method:'POST',
     headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{
-      message: text,
-      state: convState
-    }})
+    body:JSON.stringify({{message:text}})
   }})
   .then(r => r.json())
   .then(data => {{
     rmTyping();
-    convState = data.state;
     const hasResults = data.results && data.results.length > 0;
+    const hasCluster = data.intent === 'cluster_info' && data.clusters && data.clusters.length > 0;
+    // Strip markdown bold/italic that GPT sometimes adds
     const cleanReply = (data.reply || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
     let extra = '';
-    if(hasResults) {{
+    if (hasCluster) {{
+      extra = clusters(data.clusters);
+    }} else if (hasResults) {{
       extra = cards(data.results);
     }}
-    const msgClass = hasResults ? 'bot has-cards' : 'bot';
+    const msgClass = (hasResults || hasCluster) ? 'bot has-cards' : 'bot';
     add(msgClass, '<div class="bubble">' + esc(cleanReply) + '</div>' + extra);
   }})
-  .catch(err => {{
+  .catch(() => {{
     rmTyping();
-    add('bot', '<div class="bubble">אופס, משהו השתבש 😅</div>');
+    add('bot', '<div class="bubble">משהו השתבש. נסו שוב בעוד רגע.</div>');
   }});
+}}
+
+function go(q){{
+  inp.value = q;
+  send();
 }}
 
 btn.onclick = send;
 inp.addEventListener('keydown', e => {{
   if(e.key === 'Enter') send();
 }});
-
-function go(q) {{
-  inp.value = q;
-  send();
-}}
-
-// Send initial greeting
-setTimeout(() => {{
-  fetch('/chat', {{
-    method:'POST',
-    headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{
-      message: 'היי',
-      state: convState
-    }})
-  }})
-  .then(r => r.json())
-  .then(data => {{
-    convState = data.state;
-    add('bot', '<div class="bubble">' + esc(data.reply || 'שלום!') + '</div>');
-  }});
-}}, 300);
 </script>
 </body>
 </html>"""
 
 # ==============================================================
-# 12. RUN
+# 11. RUN
 # ==============================================================
 
 if __name__ == "__main__":
