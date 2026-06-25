@@ -382,7 +382,7 @@ def call_openai(user_text, conv_state, results=None):
         state = conv_state.get("state", "greeting")
         questions_asked = conv_state.get("questions_asked", 0)
         
-        # Build data block
+        # Build data block - ONLY from database results
         data_block = ""
         if results:
             for r in results[:2]:
@@ -396,32 +396,30 @@ def call_openai(user_text, conv_state, results=None):
         system_prompt = """
 You are MovieMate, a friendly and conversational movie recommendation AI.
 
-IMPORTANT RULES FOR THIS CONVERSATION MODE:
-1. You are having a natural, conversational chat - NOT responding to queries.
-2. Your goal is to gradually understand the user's movie preferences through friendly dialogue.
-3. Ask ONE question at a time, based on what you already know.
-4. Remember what the user has already told you - don't ask twice.
-5. After collecting 2-3 preferences (genre, year, platform), you can recommend movies.
-6. If user asks something unrelated to movies, politely decline and redirect: "אני כאן בשביל להמליץ על סרטים 🎬"
-7. Keep responses short, friendly, and natural - like texting a friend.
-8. If the user responds with something that clearly shows a preference (e.g., "2019 and above", "I like action"), extract and remember it.
-9. Ask follow-up questions that make sense given what they've already shared.
-10. Never say "I couldn't find" - if recommendations exist, present them positively.
+CRITICAL RULES:
+1. You ONLY recommend movies from the provided database results.
+2. You NEVER invent, imagine, or suggest movies that are not in the results.
+3. If no results exist from the database, say so honestly.
+4. Your goal is to gather movie preferences through clear, direct questions.
 
-Language: Match the user's language (Hebrew or English).
+QUESTION FLOW:
+First greeting: Say "בואו נתחיל! אשאל אותך 3 שאלות מכווינות כדי למצוא לך סרט מושלם 🎬"
 
-When presenting recommendations:
-- Start with a warm intro (1-2 sentences)
-- Then say "Here are my picks:" (or in Hebrew: "הנה ההמלצות שלי:")
-- Don't list movies by name in the text - just reference them warmly
-- The movie cards will be shown separately below
+Question 1 (Genre): "מה הסגנון המועדף עליך? לדוגמא: קומדיה, אקשן, דרמה, אימה, רומנטיקה או משהו אחר?"
 
-Question diversity - ask different things based on context:
-- If no genre asked yet: "What's your mood? Comedy, action, drama...?"
-- If genre known but no year: "What era? Recent hits or classics?"
-- If genre and year, ask about platform: "Do you have Netflix, Prime, or Disney+?"
-- If platform known, you have enough - give recommendations
-- Can also ask: "Any actors you love?", "How much time do you have?", "Serious or fun?", etc.
+Question 2 (Year): "בחרת סגנון טוב! עכשיו, מאיזה שנה בערך? (מינימום שנה, או טווח כמו 2015-2023)"
+
+Question 3 (Reference): "בסדר! עכשיו, האם תוכל לתת לי דוגמא לסרט בסגנון הזה שהייתה לך אהבה אליו? (או פשוט כתוב סרט שאתה זוכר)"
+
+After 3 questions with answers: Recommend ONLY movies from the database that match the preferences.
+
+IMPORTANT:
+- Ask one clear question at a time
+- Wait for answer before proceeding
+- If user says platform (Netflix, Prime, Disney+), that's bonus info
+- Only recommend movies that are actually in the database results provided
+- Never invent movie titles
+- Keep language simple and Hebrew if user writes Hebrew
 """
 
         user_prompt = (
@@ -435,25 +433,26 @@ Question diversity - ask different things based on context:
         if state == "greeting":
             user_prompt += (
                 "This is the FIRST message. The user just opened the chat.\n"
-                "Greet them warmly and naturally, then ask the first question about their movie preferences.\n"
-                "Make it conversational and friendly."
+                "Greet them warmly in Hebrew and say you'll ask 3 focused questions to find them the perfect movie.\n"
+                "Then ask Question 1: What's their favorite genre?"
             )
         elif state == "gathering":
             user_prompt += (
                 f"You've already asked {questions_asked} questions.\n"
                 f"Current info: {collected}\n"
-                "Ask a NEW question to get more preferences. Make it natural and different from before.\n"
-                "After 2-3 questions total, you'll recommend movies."
+                f"Ask Question {questions_asked + 1} next.\n"
+                "Be clear and direct. Ask only ONE question. Wait for their answer."
             )
         elif state == "ready":
             user_prompt += (
                 f"You have enough info to recommend movies:\n{collected}\n"
-                "Present these recommendations warmly and briefly:\n" + data_block
+                f"Database results to present:\n{data_block if data_block else 'No movies found in database with these criteria.'}\n"
+                "Present ONLY these database results. Never invent movies. If no results, say honestly."
             )
         elif state == "out_of_scope":
             user_prompt += (
                 "The user asked something not related to movie recommendations.\n"
-                "Politely explain you're focused on movies and redirect them back."
+                "Politely but firmly explain you're focused on movie recommendations only and redirect them back."
             )
 
         payload = {
@@ -462,8 +461,8 @@ Question diversity - ask different things based on context:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "max_tokens": 200,
-            "temperature": 0.6
+            "max_tokens": 150,
+            "temperature": 0.5
         }
 
         req = urllib.request.Request(
@@ -549,11 +548,21 @@ def chat():
         conv_state["platform"] = new_platform
 
     # Check if this is out of scope
-    is_off_topic = not any([
-        new_genres, new_year, new_platform,
-        any(w in clean_text(user_text) for w in ["סרט", "movie", "film", "watch", "recommend", "like", "כמו", "אהבתי"]),
-        conv_state["state"] == "greeting"
-    ])
+    # During gathering phase, be lenient - only mark off-topic if no progress AND generic movie words
+    is_off_topic = False
+    if conv_state["state"] == "gathering":
+        # In gathering, only mark as off-topic if it's clearly not about movies
+        is_off_topic = not any([
+            new_genres, new_year, new_platform,
+            len(clean_text(user_text)) < 30,  # Short responses are assumed to be answering questions
+            any(w in clean_text(user_text) for w in ["סרט", "movie", "film", "netflix", "nflx", "prime", "disney", "הולו"])
+        ])
+    else:
+        is_off_topic = not any([
+            new_genres, new_year, new_platform,
+            any(w in clean_text(user_text) for w in ["סרט", "movie", "film", "watch", "recommend", "like", "כמו", "אהבתי"]),
+            conv_state["state"] == "greeting"
+        ])
 
     # Determine next state
     if conv_state["state"] == "greeting":
@@ -561,7 +570,8 @@ def chat():
         conv_state["questions_asked"] = 1
     elif conv_state["state"] == "gathering":
         conv_state["questions_asked"] += 1
-        if conv_state["questions_asked"] >= 3 or (conv_state["genres"] and conv_state["year"]):
+        # Only go to ready after exactly 3 questions AND got some preference info
+        if conv_state["questions_asked"] >= 3 and (conv_state["genres"] or conv_state["year"] or conv_state["platform"]):
             conv_state["state"] = "ready"
 
     if is_off_topic and conv_state["state"] != "greeting":
@@ -596,7 +606,7 @@ HTML_PAGE = f"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>צ׳אטבוט סרטים</title>
+<title>cinemate</title>
 <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <style>
 :root {{
@@ -637,6 +647,24 @@ body::before {{
 @keyframes spot {{
   from {{ background-position:-500px 0, -900px 0; }}
   to {{ background-position:500px 0, 900px 0; }}
+/* אנימציית נקודות אור */
+body::after {
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  background:
+    radial-gradient(circle at 10% 20%, rgba(255,209,102,.15) 0%, transparent 15%),
+    radial-gradient(circle at 90% 80%, rgba(255,48,64,.1) 0%, transparent 20%),
+    radial-gradient(circle at 50% 50%, rgba(100,200,255,.08) 0%, transparent 25%),
+    radial-gradient(circle at 20% 80%, rgba(255,150,0,.12) 0%, transparent 18%);
+  animation:glow 6s ease-in-out infinite;
+  opacity:0.8;
+}
+@keyframes glow {
+  0%,100% { opacity:0.6; }
+  50% { opacity:0.95; }
+}
 }}
 .marquee {{
   position:fixed;
@@ -671,11 +699,29 @@ header {{
   font-weight:700;
   font-size:15px;
 }}
+.hero {{
+  position:relative;
+  z-index:2;
+  text-align:center;
+  padding:8px 18px 12px;
+}}
+.hero h1 {{
+  margin:10px 0 6px;
+  font-size:clamp(38px, 7vw, 74px);
+  line-height:1;
+  font-weight:900;
+  text-shadow:0 6px 0 rgba(215,25,32,.45), 0 0 28px rgba(255,48,64,.24);
+}}
+.hero p {{
+  margin:0 auto;
+  color:#ddd6d0;
+  font-size:clamp(18px, 2.5vw, 26px);
+}}
 .stage {{
   position:relative;
   z-index:2;
-  width:min(900px, 92vw);
-  margin:40px auto 34px;
+  width:min(1120px, 92vw);
+  margin:18px auto 34px;
   background:rgba(14,14,14,.88);
   border:1px solid rgba(255,255,255,.13);
   border-radius:28px;
@@ -693,29 +739,40 @@ header {{
   letter-spacing:2px;
 }}
 .content {{ padding:24px; }}
+.quick-title {{ font-size:18px; font-weight:900; margin-bottom:10px; color:var(--cream); }}
+.chips {{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }}
+.chip {{
+  border:1px solid rgba(255,209,102,.34);
+  color:var(--cream);
+  background:rgba(255,209,102,.08);
+  padding:9px 14px;
+  border-radius:999px;
+  cursor:pointer;
+  transition:.18s;
+  font-size:15px;
+}}
+.chip:hover {{ background:rgba(215,25,32,.45); transform:translateY(-2px); }}
 .chat {{
   background:rgba(255,247,236,.96);
   color:#222;
   border-radius:22px;
-  height:480px;
+  height:420px;
   overflow-y:auto;
   padding:20px;
   border:5px solid rgba(215,25,32,.18);
-  margin-bottom:14px;
 }}
-.msg {{ display:flex; margin:12px 0; gap:8px; }}
+.msg {{ display:flex; margin:12px 0; }}
 .msg.user {{ justify-content:flex-start; }}
 .msg.bot {{ justify-content:flex-end; }}
 .msg.bot.has-cards {{ flex-direction:column; align-items:flex-end; }}
 .bubble {{
-  max-width:70%;
+  max-width:76%;
   padding:13px 16px;
   border-radius:20px;
   line-height:1.65;
   font-size:16px;
   box-shadow:0 6px 16px rgba(0,0,0,.08);
   white-space:pre-line;
-  word-wrap:break-word;
 }}
 .user .bubble {{ background:linear-gradient(135deg, var(--red), var(--red2)); color:#fff; border-bottom-left-radius:4px; }}
 .bot .bubble {{ background:#f2f2f2; color:#222; border-bottom-right-radius:4px; }}
@@ -747,10 +804,7 @@ header {{
   font-weight:900;
   cursor:pointer;
   box-shadow:0 10px 22px rgba(215,25,32,.35);
-  transition:.2s;
 }}
-#btn:hover {{ transform:translateY(-2px); box-shadow:0 14px 28px rgba(215,25,32,.5); }}
-#btn:active {{ transform:translateY(0); }}
 .typing {{ display:inline-flex; gap:5px; align-items:center; }}
 .dot {{ width:7px; height:7px; background:#b10e15; border-radius:50%; animation:bounce 1s infinite; }}
 .dot:nth-child(2){{animation-delay:.2s}}
@@ -774,17 +828,36 @@ header {{
 <body>
 <div class="marquee"></div>
 <header>
-  <div class="logo">🎬 סרטים <span>AI</span></div>
-  <div class="badge">מסייע המלצות</div>
+  <div class="logo">🎬 <span>cinemate</span></div>
+  <div class="badge">בשיטת AI 🤖
 </header>
 
+<section class="hero">
+  <h1>סרט מושלם לחיים שלך 🍿
+  <p>שאלו על שנה, ז׳אנר, נטפליקס, סרטים דומים ועוד</p>
+</section>
+
 <main class="stage">
-  <div class="stage-top">🎞️ MOVIE CHAT 🎞️</div>
+  <div class="stage-top">NOW SHOWING • MOVIE AGENT • NOW SHOWING</div>
   <div class="content">
-    <div id="chat" class="chat"></div>
+    <div class="quick-title">דוגמאות לשאלות:</div>
+    <div class="chips">
+      <button class="chip" onclick="go('קומדיה משנת 2000')">קומדיה משנת 2000</button>
+      <button class="chip" onclick="go('סרטי אקשן שקיימים בנטפליקס')">אקשן בנטפליקס</button>
+      <button class="chip" onclick="go('movies similar to Inception')">דומה ל-Inception</button>
+      <button class="chip" onclick="go('find me hidden gems')">יהלומים נסתרים</button>
+      <button class="chip" onclick="go('what are the movie clusters')">הצג קבוצות סרטים</button>
+    </div>
+
+    <div id="chat" class="chat">
+      <div class="msg bot">
+        <div class="bubble">ברוכים הבאים לקולנוע החכם 🎞️ כתבו לי מה בא לכם לראות — אפשר לבקש לפי שנה, ז׳אנר או פלטפורמה כמו Netflix.</div>
+      </div>
+    </div>
+
     <div class="input-row">
-      <input id="inp" placeholder="כתוב כאן..." autocomplete="off">
-      <button id="btn">שלח</button>
+      <input id="inp" placeholder="לדוגמה: אהבתי Avatar ואני רוצה סרט אקשן מ-2021 ומעלה..." autocomplete="off">
+      <button id="btn">שליחה</button>
     </div>
   </div>
 </main>
@@ -828,11 +901,25 @@ function cards(results) {{
   let h = '<div class="cards">';
   results.forEach(r => {{
     h += `<div class="card">
-      <div class="card-title">${{esc(r.title)}}</div>
-      <div class="meta">${{esc(r.year)}} • ⭐ ${{esc(r.rating)}}/10</div>
+      <div class="card-title">${{esc(r.rank)}}. ${{esc(r.title)}}</div>
+      <div class="meta">${{esc(r.year)}} • ⭐ ${{esc(r.rating)}}/10 • התאמה ${{esc(r.score)}}</div>
       <div class="genres">${{esc(r.genres)}}</div>
-      <div class="stream">📺 ${{esc(r.streaming)}}</div>
+      ${{r.streaming ? `<div class="stream">זמין ב: ${{esc(r.streaming)}}</div>` : ''}}
       <div class="desc">${{esc(r.overview)}}</div>
+    </div>`;
+  }});
+  h += '</div>';
+  return h;
+}}
+
+function clusters(list) {{
+  if(!list) return '';
+  let h = '<div class="cards">';
+  list.forEach(c => {{
+    h += `<div class="card">
+      <div class="card-title">${{esc(c.name)}}</div>
+      <div class="meta">${{esc(c.count)}} סרטים • ממוצע ${{esc(c.avg_rating)}}</div>
+      <div class="genres">${{esc(c.top_genres)}}</div>
     </div>`;
   }});
   return h + '</div>';
@@ -859,12 +946,17 @@ function send() {{
     rmTyping();
     convState = data.state;
     const hasResults = data.results && data.results.length > 0;
+    const hasCluster = data.intent === 'cluster_info' && data.clusters && data.clusters.length > 0;
+    // Strip markdown bold/italic that GPT sometimes adds
+    const cleanReply = (data.reply || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
     let extra = '';
-    if(hasResults) {{
+    if (hasCluster) {{
+      extra = clusters(data.clusters);
+    }} else if (hasResults) {{
       extra = cards(data.results);
     }}
-    const msgClass = hasResults ? 'bot has-cards' : 'bot';
-    add(msgClass, '<div class="bubble">' + esc(data.reply || 'Hmm?') + '</div>' + extra);
+    const msgClass = (hasResults || hasCluster) ? 'bot has-cards' : 'bot';
+    add(msgClass, '<div class="bubble">' + esc(cleanReply) + '</div>' + extra);
   }})
   .catch(err => {{
     rmTyping();
@@ -876,6 +968,11 @@ btn.onclick = send;
 inp.addEventListener('keydown', e => {{
   if(e.key === 'Enter') send();
 }});
+
+function go(q) {{
+  inp.value = q;
+  send();
+}}
 
 // Send initial greeting
 setTimeout(() => {{
