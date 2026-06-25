@@ -1,4 +1,5 @@
 import os
+import random
 
 import re
 
@@ -1359,7 +1360,16 @@ def maybe_out_of_scope_during_interview(text):
         "news", "stock", "recipe", "football", "basketball", "bank", "tax",
         "מזג", "מזג אוויר", "תחזית", "גשם", "טמפרטורה", "שכר", "משכורת",
         "אקסל", "פוליטיקה", "חדשות", "מניות", "מתכון", "כדורגל", "כדורסל",
-        "בנק", "מס", "מיסים", "גובה", "משקל"
+        "בנק", "מס", "מיסים", "גובה", "משקל","גובה",
+"משקל",
+"מזג אוויר",
+"בורסה",
+"מטבע",
+"מטבעות",
+"תכנות",
+"פייתון",
+"sql",
+"excel"
     ]
     return any(x in t for x in unrelated)
 
@@ -1371,21 +1381,27 @@ def friendly_out_of_scope_reply(text):
     return "Sorry 😊 I’m here to help you choose a movie 🎬 Let’s get back to movie night — what kind of film are you looking for?"
 
 
+
 def smalltalk_reply(text, state):
     heb = is_hebrew(text)
     q = next_interview_question(state, heb)
+
     if heb:
-        return f"הכול מצוין 😊 שמח שאתה כאן. {q}"
-    return f"I’m doing great 😊 Glad you’re here. {q}"
+        options = [
+            f"הכול טוב 😊 {q}",
+            f"מעולה, תודה ששאלת 😊 {q}",
+            f"כיף לראות אותך 🎬 {q}",
+            f"אני מוכן למצוא לך סרט מעולה 😄 {q}"
+        ]
+    else:
+        options = [
+            f"Doing great 😊 {q}",
+            f"Thanks for asking 😄 {q}",
+            f"Happy to help 🎬 {q}",
+            f"Ready to find you a great movie 😊 {q}"
+        ]
 
-
-def extract_era(text):
-    t = clean_text(text)
-    if any(x in t for x in ["new", "recent", "modern", "latest", "חדש", "חדשים", "מודרני", "מהשנים האחרונות"]):
-        return "recent"
-    if any(x in t for x in ["classic", "old", "older", "קלאסי", "קלאסיקה", "ישן", "ישנים", "קלאסיקות"]):
-        return "classic"
-    return None
+    return random.choice(options)
 
 
 def extract_occasion(text):
