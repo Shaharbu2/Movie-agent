@@ -7,6 +7,7 @@ import urllib.request
 
 app = Flask(__name__)
 
+# Load data
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(BASE_DIR, "data", "movies_master.csv")
 
@@ -20,19 +21,22 @@ except Exception as e:
 
 SESSIONS = {}
 
+# ============================================================
+# HELPERS
+# ============================================================
+
 def is_hebrew(text):
     return bool(re.search(r"[\u0590-\u05FF]", str(text)))
 
 def extract_genre(text):
-    """Extract genre - flexible, not strict"""
     text = text.lower()
     genres = {
-        "comedy": "Comedy", "קומדיה": "Comedy", "מצחיק": "Comedy", "funny": "Comedy",
+        "comedy": "Comedy", "קומדיה": "Comedy", "מצחיק": "Comedy",
         "drama": "Drama", "דרמה": "Drama", "מרגש": "Drama",
-        "action": "Action", "אקשן": "Action", "fight": "Action",
-        "horror": "Horror", "אימה": "Horror", "scary": "Horror",
-        "romance": "Romance", "רומנטי": "Romance", "אהבה": "Romance",
-        "thriller": "Thriller", "מתח": "Thriller", "suspense": "Thriller",
+        "action": "Action", "אקשן": "Action",
+        "horror": "Horror", "אימה": "Horror",
+        "romance": "Romance", "רומנטי": "Romance",
+        "thriller": "Thriller", "מתח": "Thriller",
     }
     for kw, genre in genres.items():
         if kw in text:
@@ -69,7 +73,7 @@ def get_recommendations(genre=None, year=None):
     except:
         return None
 
-def call_openai(prompt):
+def call_openai(prompt, language):
     """Call OpenAI API"""
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -100,10 +104,9 @@ def call_openai(prompt):
         print(f"OpenAI error: {e}")
         return None
 
-def should_start_interview(text):
-    """Check if user wants to start movie recommendation"""
-    keywords = ["סרט", "movie", "recommend", "המלץ", "start", "בואו", "let's", "find"]
-    return any(kw in text.lower() for kw in keywords)
+# ============================================================
+# ROUTES
+# ============================================================
 
 @app.route("/")
 def index():
@@ -117,134 +120,89 @@ def chat():
         session_id = request.headers.get('X-Session-Id', 'default')
         
         if session_id not in SESSIONS:
-            SESSIONS[session_id] = {
-                "stage": 0,  # 0=casual, 1-4=interview questions, 5=done
-                "lang": "he",
-                "genre": None,
-                "year": None,
-                "occasion": None,
-                "ref_movie": None,
-            }
+            SESSIONS[session_id] = {"stage": 1, "genre": None, "year": None, "done": False}
         
         session = SESSIONS[session_id]
+        lang = "he" if is_hebrew(user_msg) else "en"
         
-        # Detect language from user message
-        if user_msg:
-            session["lang"] = "he" if is_hebrew(user_msg) else "en"
-        
-        lang = session["lang"]
-        
-        # Reset command
+        # Reset
         if user_msg.lower() in ["סרט חדש", "new movie", "reset"]:
-            SESSIONS[session_id] = {
-                "stage": 0,
-                "lang": lang,
-                "genre": None,
-                "year": None,
-                "occasion": None,
-                "ref_movie": None,
-            }
-            reply = "בואו נמצא לך סרט חדש! מה חדש?" if lang == "he" else "Let's find you a new movie! What's up?"
-            return jsonify({"reply": reply, "stage": 0})
+            SESSIONS[session_id] = {"stage": 1, "genre": None, "year": None, "done": False}
+            return jsonify({"reply": "בואו נתחיל! איזה ז'אנר?" if lang == "he" else "Let's start! What genre?", "stage": 1})
         
         if not user_msg:
             return jsonify({"reply": "", "stage": session["stage"]})
         
-        # Stage 0: Casual chat until user wants to start
-        if session["stage"] == 0:
-            # Check if user wants to start interview
-            if should_start_interview(user_msg):
-                session["stage"] = 1
-                reply = "יופי! אז, איזה סוג סרטים אתה אוהב?" if lang == "he" else "Cool! So, what kind of movies do you like?"
-                return jsonify({"reply": reply, "stage": 1})
-            
-            # Otherwise, casual conversation with OpenAI
-            prompt = f"User said: {user_msg}\nRespond casually and briefly in {'Hebrew' if lang == 'he' else 'English'}. Be friendly and conversational."
-            reply = call_openai(prompt)
+        # After recommendation - just chat
+        if session["done"]:
+            prompt = f"User asked: {user_msg}\nRespond briefly in {language} (Hebrew if 'he' else English). Answer their question or chat naturally."
+            reply = call_openai(prompt, lang)
             if not reply:
-                reply = "נשמע כיף! 😊" if lang == "he" else "Sounds good! 😊"
-            
-            return jsonify({"reply": reply, "stage": 0})
+                reply = "רוצה סרט חדש? כתוב 'סרט חדש'" if lang == "he" else "Want another movie? Type 'new movie'"
+            return jsonify({"reply": reply, "stage": "done"})
         
-        # Stage 1: Genre question
+        # Stage 1: Genre
         if session["stage"] == 1:
             genre = extract_genre(user_msg)
-            if genre:
-                session["genre"] = genre
-                session["stage"] = 2
-                reply = "מעניין! ומאיזה שנה?" if lang == "he" else "Nice! What year?"
-                return jsonify({"reply": reply, "stage": 2})
-            else:
-                # Don't repeat - just accept it and move on
-                session["genre"] = "Any"
-                session["stage"] = 2
-                reply = "אוקיי! ומאיזה שנה?" if lang == "he" else "Okay! What year?"
-                return jsonify({"reply": reply, "stage": 2})
+            if not genre:
+                reply = "בחר: קומדיה, דרמה, אקשן, רומנטיקה, אימה, מתח" if lang == "he" else "Pick: comedy, drama, action, romance, horror, thriller"
+                return jsonify({"reply": reply, "stage": 1})
+            
+            session["genre"] = genre
+            session["stage"] = 2
+            reply = "מאיזה שנה?" if lang == "he" else "What year from?"
+            return jsonify({"reply": reply, "stage": 2})
         
-        # Stage 2: Year question
+        # Stage 2: Year
         if session["stage"] == 2:
             year = extract_year(user_msg)
-            if year:
-                session["year"] = year
-            else:
-                session["year"] = 2015  # Default
+            if not year:
+                year = 2015
             
+            session["year"] = year
             session["stage"] = 3
-            reply = "מה הרגשה? לדייט, להיות בודד, עם חברים?" if lang == "he" else "What's the vibe? Date, solo, with friends?"
-            return jsonify({"reply": reply, "stage": 3})
-        
-        # Stage 3: Occasion question
-        if session["stage"] == 3:
-            session["occasion"] = user_msg  # Store whatever they said
-            session["stage"] = 4
-            reply = "יש סרט שאהבת שמתאים?" if lang == "he" else "Any movie you loved that fits?"
-            return jsonify({"reply": reply, "stage": 4})
-        
-        # Stage 4: Reference movie or final recommendation
-        if session["stage"] == 4:
-            session["ref_movie"] = user_msg
-            session["stage"] = 5
             
-            # Get movie recommendation
-            movie = get_recommendations(genre=session["genre"] if session["genre"] != "Any" else None, year=session["year"])
+            # Get movie
+            movie = get_recommendations(genre=session["genre"], year=year)
             
             if not movie:
-                reply = "אה, לא מצאתי משהו מושלם. בואו נתחיל מחדש?" if lang == "he" else "Hmm, couldn't find a perfect match. Start over?"
-                session["stage"] = 0
-                return jsonify({"reply": reply, "stage": 0})
+                reply = "לא מצאתי סרט. נסה שנה אחרת" if lang == "he" else "No movies found. Try another year"
+                session["stage"] = 2
+                return jsonify({"reply": reply, "stage": 2})
             
-            # Use OpenAI to explain
-            prompt = f"""Recommend this movie to user in 1-2 sentences:
-Movie: {movie['title']} ({movie['year']})
-Genre: {movie['genres']}
-Rating: {movie['rating']}/10
-Why: They like {session['genre']}, vibe: {session['occasion']}
-Language: {'Hebrew' if lang == 'he' else 'English'}
-Just recommend naturally, no extra text."""
+            session["done"] = True
             
-            explanation = call_openai(prompt)
+            # Use OpenAI to explain recommendation
+            prompt = f"""הממליץ לסרט:
+ז'אנר: {session['genre']}
+שנה: {year}+
+הסרט: {movie['title']} ({movie['year']})
+דירוג: {movie['rating']}/10
+תיאור: {movie['overview']}
+
+אמור: "הממליץ עליו זה [סרט]. זה [תיאור קצר למה זה טוב]"
+תשוב בעברית אם המשתמש בעברי, באנגלית אחרת.
+תשוב קצר בלבד - 1-2 משפטים."""
+            
+            explanation = call_openai(prompt, lang)
             if not explanation:
                 explanation = f"הנה: {movie['title']} ({movie['year']}) ⭐{movie['rating']}" if lang == "he" else f"Here: {movie['title']} ({movie['year']}) ⭐{movie['rating']}"
             
             return jsonify({
                 "reply": explanation,
                 "movie": movie,
-                "stage": 5
+                "stage": 3
             })
-        
-        # Stage 5: After recommendation - casual chat
-        if session["stage"] == 5:
-            prompt = f"User asked: {user_msg}\nRespond briefly in {'Hebrew' if lang == 'he' else 'English'}. Keep it casual."
-            reply = call_openai(prompt)
-            if not reply:
-                reply = "רוצה עוד המלצה? כתוב 'סרט חדש'" if lang == "he" else "Want another recommendation? Type 'new movie'"
-            return jsonify({"reply": reply, "stage": 5})
         
         return jsonify({"reply": "שגיאה" if lang == "he" else "Error", "stage": session["stage"]})
     
     except Exception as e:
         print(f"ERROR: {e}")
         return jsonify({"reply": "שגיאה" if is_hebrew(str(data.get("message", ""))) else "Error"}), 500
+
+# ============================================================
+# HTML
+# ============================================================
 
 HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="he" dir="rtl">
@@ -429,7 +387,7 @@ header span { color: var(--red); }
   
   <div class="chat" id="chat">
     <div class="msg bot">
-      <div class="bubble">שלום! 👋 מה חדש?</div>
+      <div class="bubble">שלום! 🎬 איזה ז'אנר בא לכם?</div>
     </div>
   </div>
   
