@@ -230,6 +230,10 @@ def normalize_hebrew_typos(text):
 
         "מומלצ": "מומלץ",
 
+        "קומדיא": "קומדיה", "איימה": "אימה", "רומנתי": "רומנטי", "דרמא": "דרמה",
+
+        "נטפליכס": "נטפליקס", "דסני": "דיסני", "סרת": "סרט",
+
     }
 
     for wrong, right in replacements.items():
@@ -242,9 +246,47 @@ def normalize_hebrew_typos(text):
 
 
 
-def normalize_user_text(text):
+EN_TYPO_REPLACEMENTS = {
+    "romcom": "romantic comedy", "rommance": "romance", "romace": "romance",
+    "comedey": "comedy", "commedy": "comedy", "comdy": "comedy",
+    "horrer": "horror", "horor": "horror",
+    "actoin": "action", "acion": "action",
+    "thriler": "thriller", "triller": "thriller",
+    "netfix": "netflix", "netflx": "netflix", "netfli": "netflix",
+    "disny": "disney", "diney": "disney",
+    "amazom": "amazon", "prme": "prime",
+}
 
-    return normalize_hebrew_typos(str(text).strip())
+
+def normalize_english_typos(text):
+    text = str(text)
+    for wrong, right in EN_TYPO_REPLACEMENTS.items():
+        text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
+    return text
+
+
+def fuzzy_normalize_keywords(text):
+    raw = str(text)
+    tokens = re.findall(r"[a-zA-Z]+|[\u0590-\u05FF]+", raw)
+    dictionary = list(GENRE_KEYWORD_MAP.keys()) + [p for pats in PLATFORM_PATTERNS.values() for p in pats] + MOVIE_WORDS
+    fixed = raw
+    for tok in tokens:
+        if len(tok) < 4:
+            continue
+        matches = difflib.get_close_matches(tok.lower(), dictionary, n=1, cutoff=0.82)
+        if matches:
+            fixed = re.sub(rf"(?<!\w){re.escape(tok)}(?!\w)", matches[0], fixed, flags=re.IGNORECASE)
+    return fixed
+
+
+def normalize_user_text(text):
+    text = normalize_hebrew_typos(str(text).strip())
+    text = normalize_english_typos(text)
+    try:
+        text = fuzzy_normalize_keywords(text)
+    except NameError:
+        pass
+    return text
 
 
 
@@ -808,7 +850,7 @@ def empty_result(intent="search", **extra):
 
 # ==============================================================
 
-# 7. HANDLERS - max 3 results
+# 7. HANDLERS - one result at a time
 
 # ==============================================================
 
@@ -830,7 +872,7 @@ def handle_out_of_scope(user_text):
 
 
 
-def handle_search(user_text, top_n=3):
+def handle_search(user_text, top_n=1, exclude_titles=None):
 
     if not is_movie_related(user_text):
 
@@ -859,6 +901,18 @@ def handle_search(user_text, top_n=3):
     if filtered.empty:
 
         return empty_result("search", year=year, platform=platform, genres=matched_genres)
+
+
+
+    exclude_set = {str(t).lower() for t in (exclude_titles or [])}
+
+    if exclude_set:
+
+        filtered = filtered[~filtered["title"].str.lower().isin(exclude_set)]
+
+        if filtered.empty:
+
+            return empty_result("search", year=year, platform=platform, genres=matched_genres, exhausted=True)
 
 
 
@@ -978,7 +1032,7 @@ def handle_search(user_text, top_n=3):
 
 
 
-def handle_similar(movie_title, user_text, top_n=3):
+def handle_similar(movie_title, user_text, top_n=1, exclude_titles=None):
 
     matches = df[df["title"].str.lower() == str(movie_title).lower()]
 
@@ -1019,6 +1073,14 @@ def handle_similar(movie_title, user_text, top_n=3):
 
 
     candidates, year, platform = apply_filters(candidates, user_text)
+
+
+
+    exclude_set = {str(t).lower() for t in (exclude_titles or [])}
+
+    if exclude_set:
+
+        candidates = candidates[~candidates["title"].str.lower().isin(exclude_set)]
 
 
 
@@ -1086,7 +1148,7 @@ def handle_similar(movie_title, user_text, top_n=3):
 
 
 
-def handle_anomaly(user_text, top_n=3):
+def handle_anomaly(user_text, top_n=1):
 
     filtered, year, platform = apply_filters(df, user_text)
 
@@ -1238,6 +1300,8 @@ def new_state():
         "reference_movie": None,
         "occasion": None,
         "platform": None,
+        "shown_titles": [],
+        "last_query": "",
         "done": False
     }
 
@@ -1249,7 +1313,7 @@ def get_conversation_key():
 def wants_reset(text):
     t = clean_text(text)
     return any(x in t for x in [
-        "restart", "reset", "start over", "new recommendation", "new movie",
+        "restart", "reset", "start over", "start again", "can we start again", "new recommendation", "new movie",
         "התחל מחדש", "איפוס", "המלצה חדשה", "סרט חדש", "מהתחלה"
     ])
 
@@ -1257,6 +1321,14 @@ def wants_reset(text):
 def is_none_answer(text):
     t = clean_text(text)
     return t in ["no", "none", "skip", "dont know", "don't know", "לא", "אין", "דלג", "לא יודע", "לא יודעת"]
+
+
+def wants_more(text):
+    t = clean_text(text)
+    return t in [
+        "yes", "y", "yeah", "yep", "sure", "another", "more", "one more", "next",
+        "כן", "כן עוד", "עוד", "אפשר עוד", "תן עוד", "עוד אחד", "סרט נוסף", "יאללה"
+    ]
 
 
 def maybe_out_of_scope_during_interview(text):
@@ -1328,16 +1400,24 @@ def build_recommendation_query(state):
 
 
 def recommend_from_state(state, user_text):
-    query = build_recommendation_query(state)
+    query = state.get("last_query") or build_recommendation_query(state)
+    state["last_query"] = query
     reference = state.get("reference_movie")
+    state.setdefault("shown_titles", [])
+    shown = state.get("shown_titles", [])
 
     if reference:
         movie_title = find_movie_title(reference) or reference
-        result = handle_similar(movie_title, query)
+        result = handle_similar(movie_title, query, top_n=1, exclude_titles=shown)
         if not result.get("results"):
-            result = handle_search(query)
+            result = handle_search(query, top_n=1, exclude_titles=shown)
     else:
-        result = handle_search(query)
+        result = handle_search(query, top_n=1, exclude_titles=shown)
+
+    if result.get("results"):
+        title = result["results"][0]["title"]
+        if title not in state["shown_titles"]:
+            state["shown_titles"].append(title)
 
     result["interview"] = state.copy()
     return result
@@ -1357,7 +1437,7 @@ def call_openai(user_text, result):
         data_block = ""
 
         if results:
-            for r in results[:3]:
+            for r in results[:1]:
                 streaming = r.get("streaming") or "Not available in streaming dataset"
                 data_block += (
                     f"- {r['title']} ({r['year']}), genres: {r['genres']}, "
@@ -1383,10 +1463,10 @@ Important rules:
 - Never invent movie titles.
 - Never add movies that are not in the dataset results.
 - If the user asks about something unrelated, politely say that your sole purpose is helping with movie recommendations.
-- If dataset results ARE provided, present them naturally as recommendations.
+- If dataset results ARE provided, present ONLY ONE movie recommendation, very briefly.
 - If no dataset results were found, say no suitable match was found and suggest changing movie name, year, genre, or platform.
 - Do NOT use markdown formatting like **bold** or *italic*.
-- Since movie cards are shown separately, keep your answer short and do not create a long list.
+- Since the movie card is shown separately, do not repeat all card details. Write one short sentence and then ask if the user wants one more suitable movie.
 - Match the user's language: Hebrew if the user writes Hebrew, English if the user writes English.
 """
 
@@ -1400,7 +1480,7 @@ Important rules:
             f"Reference movie: {result.get('reference_movie')}\n"
             f"Interview data: {json.dumps(result.get('interview', {}), ensure_ascii=False)}\n\n"
             f"Dataset results:\n{data_block}\n\n"
-            "Write the final response to the user. If there are dataset results, introduce them as recommendations. If there are no dataset results, do not list movies."
+            "Write the final response to the user. If there is a dataset result, recommend only that one movie briefly and ask if the user wants one more suitable movie. If there are no dataset results, do not list movies."
         )
 
         payload = {
@@ -1449,9 +1529,10 @@ def fallback_reply(user_text, result):
 
     if not results:
         return "לא מצאתי התאמה טובה בדאטה. אפשר לנסות לשנות שם סרט, שנה, ז׳אנר או פלטפורמה." if heb else "I couldn’t find a good match in the dataset. Try changing the movie name, year, genre, or platform."
-
-    titles = ", ".join([r["title"] for r in results[:3]])
-    return f"מעולה, לפי מה שסיפרת מצאתי כמה סרטים שיכולים להתאים: {titles}." if heb else f"Great, based on your answers I found a few movies that may fit: {titles}."
+    title = results[0]["title"]
+    if result.get("exhausted"):
+        return "אין לי עוד המלצה טובה לפי אותם פרטים. אפשר להתחיל חיפוש חדש." if heb else "I do not have another strong match for the same details. You can start a new search."
+    return f"ההמלצה שלי: {title}. רוצה שאציע עוד סרט מתאים?" if heb else f"My recommendation: {title}. Would you like one more suitable movie?"
 
 
 # ============================================================== 
@@ -1475,10 +1556,16 @@ def chat():
     key = get_conversation_key()
     heb = is_hebrew(user_text) if user_text else True
 
-    if key not in CONVERSATIONS or wants_reset(user_text):
+    reset_requested = wants_reset(user_text)
+
+    if key not in CONVERSATIONS or reset_requested:
         CONVERSATIONS[key] = new_state()
 
     state = CONVERSATIONS[key]
+
+    if reset_requested and user_text:
+        q = interview_question(0, heb)
+        return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": [], "reset": True})
 
     if not user_text:
         result = {"intent": "interview_question", "reply": interview_question(0, heb), "results": []}
@@ -1501,15 +1588,21 @@ def chat():
         result["reply"] = call_openai(user_text, result)
         return jsonify(result)
 
+    if wants_more(user_text):
+        result = recommend_from_state(state, user_text)
+        CONVERSATIONS[key] = state
+        result["reply"] = call_openai(user_text, result)
+        return jsonify(result)
+
     intent, payload = detect_intent(user_text)
     if intent == "similar":
-        result = handle_similar(payload, user_text)
+        result = handle_similar(payload, user_text, top_n=1, exclude_titles=state.get("shown_titles", []))
     elif intent == "anomaly":
-        result = handle_anomaly(user_text)
+        result = handle_anomaly(user_text, top_n=1)
     elif intent == "cluster_info":
         result = handle_cluster_info(user_text)
     elif is_movie_related(user_text):
-        result = handle_search(user_text)
+        result = handle_search(user_text, top_n=1, exclude_titles=state.get("shown_titles", []))
     else:
         result = handle_out_of_scope(user_text)
 
@@ -2049,7 +2142,7 @@ function cards(results){{
 
   let h = '<div class="cards">';
 
-  results.forEach(r => {{
+  results.slice(0, 1).forEach(r => {{
 
     h += `<div class="card">
 
@@ -2061,7 +2154,6 @@ function cards(results){{
 
       ${{r.streaming ? `<div class="stream">זמין ב: ${{esc(r.streaming)}}</div>` : ''}}
 
-      <div class="desc">${{esc(r.overview)}}</div>
 
     </div>`;
 
@@ -2130,6 +2222,10 @@ function send(){{
   .then(data => {{
 
     rmTyping();
+
+    if (data.reset) {{
+      chat.innerHTML = '';
+    }}
 
     const hasResults = data.results && data.results.length > 0;
 
