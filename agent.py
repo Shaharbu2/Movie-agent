@@ -142,7 +142,7 @@ def get_streaming(row):
         platforms.append("Disney+")
     return ", ".join(platforms) if platforms else "Not available"
 
-def row_to_result(rank, idx):
+def row_to_result(rank, idx, score=0):
     try:
         row = df.loc[int(idx)]
         overview = row["overview"]
@@ -152,7 +152,8 @@ def row_to_result(rank, idx):
             "year": int(row["release_year"]) if row["release_year"] else "N/A",
             "genres": row["genres"],
             "rating": round(float(row["vote_average"]), 1),
-            "overview": overview[:150] + "..." if len(overview) > 150 else overview,
+            "overview": overview[:170] + "..." if len(overview) > 170 else overview,
+            "score": round(float(score), 3),
             "streaming": get_streaming(row)
         }
     except:
@@ -167,6 +168,7 @@ def get_or_create_session(session_id):
         SESSIONS[session_id] = {
             "stage": "greeting",
             "answers": {},
+            "done": False,  # Track if we've made a recommendation
         }
     return SESSIONS[session_id]
 
@@ -205,7 +207,8 @@ def recommend_movies(answers, top_n=1):
             ascending=False
         ).head(top_n)
         
-        return [row_to_result(i + 1, idx) for i, (idx, row) in enumerate(sorted_df.iterrows())]
+        return [row_to_result(i + 1, idx, row["vote_average"] / 10.0) 
+                for i, (idx, row) in enumerate(sorted_df.iterrows())]
     
     except Exception as e:
         print(f"Error in recommend_movies: {e}")
@@ -215,7 +218,7 @@ def recommend_movies(answers, top_n=1):
 # OPENAI INTEGRATION
 # ==============================================================
 
-def call_openai_safe(user_text, stage, answers, results, language):
+def call_openai_safe(user_text, stage, answers, results, language, is_post_recommendation=False):
     """Call OpenAI with error handling."""
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     
@@ -251,7 +254,9 @@ Rules:
 - Respond in {language}
 - Never invent movies
 - Only recommend from dataset results
-- Keep responses brief (1-2 sentences)"""
+- Keep responses brief (1-2 sentences)
+- After recommending a movie, you can continue having normal conversations
+- Only give new recommendations if the user specifically asks for another movie"""
         
         if stage == "ready":
             user_prompt = f"""User preferences: {context_str}
@@ -260,6 +265,11 @@ Movie to recommend:
 {recs_block}
 
 Present this recommendation warmly. Explain briefly why it fits their preferences."""
+        elif is_post_recommendation:
+            user_prompt = f"""You already recommended a movie to this user.
+Now they are asking: {user_text}
+
+Just answer their question naturally as a helpful assistant. Don't try to recommend another movie unless they specifically ask for one."""
         else:
             user_prompt = f"""Current conversation stage: {stage}
 User said: {user_text}
@@ -342,7 +352,7 @@ def chat():
     try:
         data = request.get_json() or {}
         user_text = str(data.get("message", "")).strip()
-        session_id = data.get("session_id", "default")
+        session_id = request.headers.get('X-Session-Id', 'default')
         
         # Get session
         session = get_or_create_session(session_id)
@@ -350,30 +360,47 @@ def chat():
         answers = session["answers"]
         language = "Hebrew" if is_hebrew(user_text) else "English"
         
+        # Check for reset command
+        if user_text.lower() in ["סרט חדש", "new movie", "מחדש", "reset", "סרט אחר"]:
+            SESSIONS[session_id] = {
+                "stage": "greeting",
+                "answers": {},
+                "done": False,
+            }
+            session = SESSIONS[session_id]
+            q = "היי, ברוכים הבאים ל-Cinemate 🎬 בואו נמצא יחד סרט שמתאים בדיוק למצב הרוח שלכם. נתחיל בקטנה: איזה סגנון בא לכם לראות?" if language == "Hebrew" else "Hi, welcome to Cinemate 🎬 Let's find a movie that perfectly matches your mood. Let's start: What kind of movie would you like to see?"
+            return jsonify({"reply": q, "results": [], "stage": "greeting", "reset": True})
+        
         # Empty message - just ask next question
         if not user_text:
             q = call_openai_safe(user_text, stage, answers, [], language)
             return jsonify({"reply": q, "results": [], "stage": stage})
+        
+        # If we've already given a recommendation and user is asking something else, just answer naturally
+        if session.get("done"):
+            reply = call_openai_safe(user_text, "post_recommendation", answers, [], language, is_post_recommendation=True)
+            return jsonify({"reply": reply, "results": [], "stage": "done"})
         
         # Parse input based on current stage
         if stage == "greeting":
             genres = extract_genres(user_text)
             if genres:
                 answers["genre"] = genres[0]  # Take first genre
-                session["stage"] = "year"
+                session["stage"] = "genre_refinement"
             else:
                 # Ask again
                 q = call_openai_safe(user_text, "genre", answers, [], language)
                 return jsonify({"reply": q, "results": [], "stage": "genre"})
         
+        elif stage == "genre_refinement":
+            # Ask about year or context
+            session["stage"] = "year"
+        
         elif stage == "year":
             year = extract_year(user_text)
             if year:
                 answers["year"] = year
-                session["stage"] = "platform"
-            else:
-                # Ask again or move forward
-                session["stage"] = "platform"
+            session["stage"] = "platform"
         
         elif stage == "platform":
             platform = extract_platform(user_text)
@@ -386,6 +413,7 @@ def chat():
             results = recommend_movies(answers, top_n=1)
             reply = call_openai_safe(user_text, "ready", answers, results, language)
             session["stage"] = "ready"
+            session["done"] = True  # Mark as done - user can now ask other questions
             return jsonify({"reply": reply, "results": results, "stage": "ready"})
         
         # Ask next question
@@ -396,214 +424,644 @@ def chat():
         print(f"ERROR in /chat: {e}")
         print(traceback.format_exc())
         return jsonify({
-            "reply": "משהו השתבש. בואו נתחיל מחדש!" if is_hebrew(str(data.get("message", ""))) else "Something went wrong. Let's start over!",
+            "reply": "משהו השתבש. נסו שוב בעוד רגע." if is_hebrew(str(data.get("message", ""))) else "Something went wrong. Please try again.",
             "results": [],
             "stage": "greeting",
             "error": str(e)
         }), 500
 
 # ==============================================================
-# HTML UI
+# HTML UI - ORIGINAL DESIGN PRESERVED EXACTLY
 # ==============================================================
 
-HTML_PAGE = """<!DOCTYPE html>
-<html lang="en" dir="ltr">
+HTML_PAGE = f"""<!DOCTYPE html>
+
+<html lang="he" dir="rtl">
+
 <head>
+
 <meta charset="UTF-8">
+
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cinemate</title>
-<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;700;900&display=swap" rel="stylesheet">
+
+<title>צ׳אטבוט סרטים</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
 <style>
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  font-family: 'Heebo', sans-serif;
-  background: linear-gradient(135deg, #1a1a2e 0%, #0f3460 100%);
-  color: #fff;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-header {
-  padding: 20px;
-  text-align: center;
-  background: rgba(0,0,0,0.3);
-  border-bottom: 2px solid #e94560;
-}
-header h1 { margin: 0; font-size: 2.5em; }
-header p { margin: 5px 0 0 0; opacity: 0.8; }
-.container {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 20px;
-}
-.chat-box {
-  width: 100%;
-  max-width: 600px;
-  background: rgba(255,255,255,0.95);
-  border-radius: 15px;
-  overflow: hidden;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-  display: flex;
-  flex-direction: column;
-  color: #333;
-}
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  min-height: 400px;
-  max-height: 500px;
-}
-.msg { margin: 15px 0; display: flex; }
-.msg.user { justify-content: flex-end; }
-.msg.bot { justify-content: flex-start; }
-.bubble {
-  max-width: 80%;
-  padding: 12px 16px;
-  border-radius: 12px;
-  line-height: 1.5;
-}
-.msg.user .bubble { background: #e94560; color: white; }
-.msg.bot .bubble { background: #f0f0f0; color: #333; }
-.card {
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 15px;
-  margin-top: 10px;
-  font-size: 0.9em;
-}
-.card-title { font-weight: 700; color: #e94560; margin: 0 0 5px 0; }
-.card-meta { color: #666; font-size: 0.85em; margin: 3px 0; }
-.input-area {
-  padding: 15px;
-  background: #f9f9f9;
-  border-top: 1px solid #ddd;
-  display: flex;
-  gap: 10px;
-}
-input {
-  flex: 1;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 10px;
-  font-size: 1em;
-  font-family: 'Heebo', sans-serif;
-}
-button {
-  padding: 10px 20px;
-  background: #e94560;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: 700;
-  transition: 0.2s;
-}
-button:hover { background: #d63450; }
-.typing { display: inline-flex; gap: 4px; }
-.dot { width: 5px; height: 5px; background: #e94560; border-radius: 50%; animation: bounce 1s infinite; }
-.dot:nth-child(2) { animation-delay: 0.2s; }
-.dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes bounce { 0%, 80%, 100% { opacity: 0.4; } 40% { opacity: 1; } }
+
+:root {{
+
+  --bg:#080808;
+
+  --red:#d71920;
+
+  --red2:#ff3040;
+
+  --gold:#ffd166;
+
+  --cream:#fff7ec;
+
+  --text:#f6f1ea;
+
+  --dark:#141414;
+
+  --muted:#b7b0aa;
+
+}}
+
+* {{ box-sizing:border-box; }}
+
+body {{
+
+  margin:0;
+
+  font-family:'Heebo', sans-serif;
+
+  direction:rtl;
+
+  color:var(--text);
+
+  min-height:100vh;
+
+  background:
+
+    linear-gradient(rgba(0,0,0,.76), rgba(0,0,0,.72)),
+
+    radial-gradient(circle at 20% 10%, rgba(255,48,64,.28), transparent 25%),
+
+    radial-gradient(circle at 80% 20%, rgba(255,209,102,.16), transparent 24%),
+
+    #080808;
+
+  overflow-x:hidden;
+
+}}
+
+body::before {{
+
+  content:"";
+
+  position:fixed;
+
+  inset:0;
+
+  pointer-events:none;
+
+  background:
+
+    repeating-linear-gradient(90deg, rgba(255,255,255,.03) 0 2px, transparent 2px 84px),
+
+    linear-gradient(90deg, transparent, rgba(255,255,255,.09), transparent);
+
+  animation:spot 8s linear infinite;
+
+  opacity:.7;
+
+}}
+
+@keyframes spot {{
+
+  from {{ background-position:-500px 0, -900px 0; }}
+
+  to {{ background-position:500px 0, 900px 0; }}
+
+}}
+
+.marquee {{
+
+  position:fixed;
+
+  top:0;
+
+  left:0;
+
+  right:0;
+
+  height:10px;
+
+  background:repeating-linear-gradient(90deg, var(--gold) 0 18px, #5b0004 18px 36px);
+
+  box-shadow:0 0 18px rgba(255,209,102,.7);
+
+  z-index:3;
+
+}}
+
+header {{
+
+  position:relative;
+
+  z-index:4;
+
+  padding:18px 42px 12px;
+
+  display:flex;
+
+  align-items:center;
+
+  justify-content:space-between;
+
+}}
+
+.logo {{
+
+  font-size:30px;
+
+  font-weight:900;
+
+  letter-spacing:.5px;
+
+}}
+
+.logo span {{ color:var(--red2); }}
+
+.badge {{
+
+  background:rgba(255,255,255,.08);
+
+  border:1px solid rgba(255,255,255,.14);
+
+  padding:8px 16px;
+
+  border-radius:999px;
+
+  color:var(--gold);
+
+  font-weight:700;
+
+  font-size:15px;
+
+}}
+
+.hero {{
+
+  position:relative;
+
+  z-index:2;
+
+  text-align:center;
+
+  padding:8px 18px 12px;
+
+}}
+
+.hero h1 {{
+
+  margin:10px 0 6px;
+
+  font-size:clamp(38px, 7vw, 74px);
+
+  line-height:1;
+
+  font-weight:900;
+
+  text-shadow:0 6px 0 rgba(215,25,32,.45), 0 0 28px rgba(255,48,64,.24);
+
+}}
+
+.hero p {{
+
+  margin:0 auto;
+
+  color:#ddd6d0;
+
+  font-size:clamp(18px, 2.5vw, 26px);
+
+}}
+
+.stage {{
+
+  position:relative;
+
+  z-index:2;
+
+  width:min(1120px, 92vw);
+
+  margin:18px auto 34px;
+
+  background:rgba(14,14,14,.88);
+
+  border:1px solid rgba(255,255,255,.13);
+
+  border-radius:28px;
+
+  box-shadow:0 24px 80px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.04);
+
+  overflow:hidden;
+
+}}
+
+.stage-top {{
+
+  height:42px;
+
+  background:linear-gradient(90deg, #260003, #9e1018, #260003);
+
+  display:flex;
+
+  align-items:center;
+
+  justify-content:center;
+
+  color:var(--gold);
+
+  font-weight:900;
+
+  letter-spacing:2px;
+
+}}
+
+.content {{ padding:24px; }}
+
+.quick-title {{ font-size:18px; font-weight:900; margin-bottom:10px; color:var(--cream); }}
+
+.chips {{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }}
+
+.chip {{
+
+  border:1px solid rgba(255,209,102,.34);
+
+  color:var(--cream);
+
+  background:rgba(255,209,102,.08);
+
+  padding:9px 14px;
+
+  border-radius:999px;
+
+  cursor:pointer;
+
+  transition:.18s;
+
+  font-size:15px;
+
+}}
+
+.chip:hover {{ background:rgba(215,25,32,.45); transform:translateY(-2px); }}
+
+.chat {{
+
+  background:rgba(255,247,236,.96);
+
+  color:#222;
+
+  border-radius:22px;
+
+  height:420px;
+
+  overflow-y:auto;
+
+  padding:20px;
+
+  border:5px solid rgba(215,25,32,.18);
+
+}}
+
+.msg {{ display:flex; margin:12px 0; }}
+
+.msg.user {{ justify-content:flex-start; }}
+
+.msg.bot {{ justify-content:flex-end; }}
+
+.msg.bot.has-cards {{ flex-direction:column; align-items:flex-end; }}
+
+.bubble {{
+
+  max-width:76%;
+
+  padding:13px 16px;
+
+  border-radius:20px;
+
+  line-height:1.65;
+
+  font-size:16px;
+
+  box-shadow:0 6px 16px rgba(0,0,0,.08);
+
+  white-space:pre-line;
+
+}}
+
+.user .bubble {{ background:linear-gradient(135deg, var(--red), var(--red2)); color:#fff; border-bottom-left-radius:4px; }}
+
+.bot .bubble {{ background:#f2f2f2; color:#222; border-bottom-right-radius:4px; }}
+
+.cards {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-top:10px; width:100%; }}
+
+.card {{ background:white; border:1px solid #eee; border-radius:16px; padding:14px; color:#222; box-shadow:0 8px 20px rgba(0,0,0,.08); }}
+
+.card-title {{ font-weight:900; color:#b10e15; font-size:17px; }}
+
+.meta {{ color:#555; font-size:13px; margin:5px 0; }}
+
+.genres {{ font-size:13px; color:#7a4b00; font-weight:700; margin-bottom:5px; }}
+
+.desc {{ color:#444; font-size:13px; line-height:1.45; }}
+
+.stream {{ margin-top:6px; color:#111; font-size:13px; font-weight:800; }}
+
+.input-row {{ display:flex; gap:10px; margin-top:14px; }}
+
+#inp {{
+
+  flex:1;
+
+  border:none;
+
+  outline:none;
+
+  border-radius:18px;
+
+  padding:15px 18px;
+
+  font-family:'Heebo', sans-serif;
+
+  font-size:17px;
+
+  background:#fff;
+
+}}
+
+#btn {{
+
+  border:none;
+
+  border-radius:18px;
+
+  padding:0 24px;
+
+  background:linear-gradient(135deg, var(--red), #760006);
+
+  color:#fff;
+
+  font-size:18px;
+
+  font-weight:900;
+
+  cursor:pointer;
+
+  box-shadow:0 10px 22px rgba(215,25,32,.35);
+
+}}
+
+.typing {{ display:inline-flex; gap:5px; align-items:center; }}
+
+.dot {{ width:7px; height:7px; background:#b10e15; border-radius:50%; animation:bounce 1s infinite; }}
+
+.dot:nth-child(2){{animation-delay:.2s}}
+
+.dot:nth-child(3){{animation-delay:.4s}}
+
+@keyframes bounce {{
+
+  0%,80%,100%{{transform:translateY(0); opacity:.4}}
+
+  40%{{transform:translateY(-6px); opacity:1}}
+
+}}
+
+@media(max-width:720px){{
+
+  header {{ padding:16px 18px 8px; }}
+
+  .badge {{ display:none; }}
+
+  .stage {{ width:94vw; }}
+
+  .content {{ padding:15px; }}
+
+  .chat {{ height:390px; }}
+
+  .bubble,.cards {{ max-width:94%; }}
+
+  .input-row {{ flex-direction:column; }}
+
+  #btn {{ padding:13px; }}
+
+}}
+
 </style>
+
 </head>
+
 <body>
+
+<div class="marquee"></div>
+
 <header>
-  <h1>🎬 Cinemate</h1>
-  <p>Find Your Perfect Movie</p>
+
+  <div class="logo">🎬 <span>Cinemate</span></div>
+
 </header>
-<div class="container">
-  <div class="chat-box">
-    <div class="chat-messages" id="messages">
+
+
+
+<section class="hero">
+
+  <h1>מחפשים את הסרט המושלם? 🍿</h1>
+
+</section>
+
+
+
+<main class="stage">
+
+  <div class="stage-top">NOW SHOWING • MOVIE AGENT • NOW SHOWING</div>
+
+  <div class="content">
+
+<div id="chat" class="chat">
+
       <div class="msg bot">
-        <div class="bubble">Hi! 🎬 Let's find the perfect movie for you. What kind of movie interests you today?</div>
+
+        <div class="bubble">היי, ברוכים הבאים ל-Cinemate 🎬 בואו נמצא יחד סרט שמתאים בדיוק למצב הרוח שלכם. נתחיל בקטנה: איזה סגנון בא לכם לראות?</div>
+
       </div>
+
     </div>
-    <div class="input-area">
-      <input id="input" placeholder="Type your answer..." autocomplete="off">
-      <button id="send">Send</button>
+
+
+
+    <div class="input-row">
+
+      <input id="inp" placeholder="ענו כאן לשאלה של Cinemate..." autocomplete="off">
+
+      <button id="btn">שליחה</button>
+
     </div>
+
   </div>
-</div>
+
+</main>
+
+
 
 <script>
-const sessionId = 'sess_' + Math.random().toString(36).substr(2, 9);
-const msgDiv = document.getElementById('messages');
-const input = document.getElementById('input');
 
-function addMsg(role, text, card = null) {
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  bubble.textContent = text;
-  div.appendChild(bubble);
-  
-  if (card && role === 'bot') {
-    const cardDiv = document.createElement('div');
-    cardDiv.className = 'card';
-    cardDiv.innerHTML = `
-      <div class="card-title">${card.title} (${card.year})</div>
-      <div class="card-meta">⭐ ${card.rating}/10 • ${card.genres}</div>
-      <div class="card-meta">📺 ${card.streaming}</div>
-      <div style="margin-top: 8px; color: #666; font-size: 0.85em;">${card.overview}</div>
-    `;
-    div.appendChild(cardDiv);
-  }
-  
-  msgDiv.appendChild(div);
-  msgDiv.scrollTop = msgDiv.scrollHeight;
-}
+const chat = document.getElementById('chat');
 
-function addTyping() {
-  const div = document.createElement('div');
-  div.className = 'msg bot';
-  div.id = 'typing';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  bubble.innerHTML = '<span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>';
-  div.appendChild(bubble);
-  msgDiv.appendChild(div);
-  msgDiv.scrollTop = msgDiv.scrollHeight;
-}
+const inp = document.getElementById('inp');
 
-function removeTyping() {
-  const typing = document.getElementById('typing');
-  if (typing) typing.remove();
-}
+const btn = document.getElementById('btn');
 
-function send() {
-  const text = input.value.trim();
-  if (!text) return;
-  
-  addMsg('user', text);
-  input.value = '';
+const sessionId = 'sess_' + Math.random().toString(36).substr(2, 16);
+
+
+
+function esc(s){{
+
+  return String(s || '').replace(/[&<>"']/g, m => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m]));
+
+}}
+
+
+
+function add(role, html){{
+
+  const d = document.createElement('div');
+
+  d.className = 'msg ' + role;
+
+  d.innerHTML = html;
+
+  chat.appendChild(d);
+
+  chat.scrollTop = chat.scrollHeight;
+
+}}
+
+
+
+function addTyping(){{
+
+  add('bot', '<div class="bubble" id="typing"><span class="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span></div>');
+
+}}
+
+
+
+function rmTyping(){{
+
+  const t = document.getElementById('typing');
+
+  if(t) t.parentElement.remove();
+
+}}
+
+
+
+function cards(results){{
+
+  if(!results || !results.length) return '';
+
+  let h = '<div class="cards">';
+
+  results.slice(0, 1).forEach(r => {{
+
+    h += `<div class="card">
+
+      <div class="card-title">${{esc(r.rank)}}. ${{esc(r.title)}}</div>
+
+      <div class="meta">${{esc(r.year)}} • ⭐ ${{esc(r.rating)}}/10 • התאמה ${{esc(r.score)}}</div>
+
+      <div class="genres">${{esc(r.genres)}}</div>
+
+      ${{r.streaming ? `<div class="stream">זמין ב: ${{esc(r.streaming)}}</div>` : ''}}
+
+      <div class="desc">${{esc(r.overview)}}</div>
+
+    </div>`;
+
+  }});
+
+  h += '</div>';
+
+  return h;
+
+}}
+
+
+
+function send(){{
+
+  const text = inp.value.trim();
+
+  if(!text) return;
+
+  add('user', '<div class="bubble">' + esc(text) + '</div>');
+
+  inp.value = '';
+
   addTyping();
-  
-  fetch('/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: text, session_id: sessionId })
-  })
-  .then(r => r.json())
-  .then(data => {
-    removeTyping();
-    addMsg('bot', data.reply || 'No response', data.results ? data.results[0] : null);
-  })
-  .catch(err => {
-    removeTyping();
-    addMsg('bot', 'Error: ' + err);
-  });
-}
 
-document.getElementById('send').onclick = send;
-input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+
+  fetch('/chat', {{
+
+    method:'POST',
+
+    headers:{{'Content-Type':'application/json', 'X-Session-Id': sessionId}},
+
+    body:JSON.stringify({{message:text}})
+
+  }})
+
+  .then(r => r.json())
+
+  .then(data => {{
+
+    rmTyping();
+
+    if (data.reset) {{
+
+      chat.innerHTML = '';
+
+    }}
+
+    const hasResults = data.results && data.results.length > 0;
+
+    const cleanReply = (data.reply || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
+
+    let extra = '';
+
+    if (hasResults) {{
+
+      extra = cards(data.results);
+
+    }}
+
+    const msgClass = hasResults ? 'bot has-cards' : 'bot';
+
+    add(msgClass, '<div class="bubble">' + esc(cleanReply) + '</div>' + extra);
+
+  }})
+
+  .catch(() => {{
+
+    rmTyping();
+
+    add('bot', '<div class="bubble">משהו השתבש. נסו שוב בעוד רגע.</div>');
+
+  }});
+
+}}
+
+
+
+btn.onclick = send;
+
+inp.addEventListener('keydown', e => {{
+
+  if(e.key === 'Enter') send();
+
+}});
+
 </script>
+
 </body>
+
 </html>"""
 
 # ==============================================================
