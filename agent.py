@@ -166,9 +166,9 @@ def row_to_result(rank, idx, score=0):
 def get_or_create_session(session_id):
     if session_id not in SESSIONS:
         SESSIONS[session_id] = {
-            "stage": "greeting",
+            "stage": "genre",  # Start with genre question
             "answers": {},
-            "done": False,  # Track if we've made a recommendation
+            "done": False,
         }
     return SESSIONS[session_id]
 
@@ -219,7 +219,7 @@ def recommend_movies(answers, top_n=1):
 # ==============================================================
 
 def call_openai_safe(user_text, stage, answers, results, language, is_post_recommendation=False):
-    """Call OpenAI with error handling."""
+    """Call OpenAI only for recommendations and post-recommendation chat."""
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     
     if not api_key:
@@ -234,8 +234,10 @@ def call_openai_safe(user_text, stage, answers, results, language, is_post_recom
             context_lines.append(f"Genre: {answers['genre']}")
         if "year" in answers:
             context_lines.append(f"Year from: {answers['year']}")
-        if "platform" in answers:
-            context_lines.append(f"Platform: {answers['platform']}")
+        if "occasion" in answers:
+            context_lines.append(f"Occasion: {answers['occasion']}")
+        if "reference" in answers:
+            context_lines.append(f"Reference movie: {answers['reference']}")
         
         context_str = "\n".join(context_lines) if context_lines else "No preferences yet"
         
@@ -246,15 +248,14 @@ def call_openai_safe(user_text, stage, answers, results, language, is_post_recom
                 recs_block += f"- {r['title']} ({r['year']}), {r['genres']}, ⭐{r['rating']}/10\n"
         
         system_prompt = f"""You are Cinemate, a friendly movie recommendation chatbot.
-Your role is to guide users through finding the perfect movie by asking questions one at a time.
+You help users find movies through natural conversation.
 
 Rules:
-- Ask ONE question at a time
 - Be warm and conversational
 - Respond in {language}
 - Never invent movies
 - Only recommend from dataset results
-- Keep responses brief (1-2 sentences)
+- Keep responses brief and natural
 - After recommending a movie, you can continue having normal conversations
 - Only give new recommendations if the user specifically asks for another movie"""
         
@@ -264,18 +265,15 @@ Rules:
 Movie to recommend:
 {recs_block}
 
-Present this recommendation warmly. Explain briefly why it fits their preferences."""
+Present this recommendation warmly. Explain briefly why it fits their preferences. Ask if they want to chat about something else or get another recommendation."""
         elif is_post_recommendation:
             user_prompt = f"""You already recommended a movie to this user.
 Now they are asking: {user_text}
 
 Just answer their question naturally as a helpful assistant. Don't try to recommend another movie unless they specifically ask for one."""
         else:
-            user_prompt = f"""Current conversation stage: {stage}
-User said: {user_text}
-What we know: {context_str}
-
-Ask the next natural question about their movie preferences. One question only."""
+            # Don't use OpenAI for interview questions - use simple logic instead
+            return get_next_question(stage, answers, language)
         
         payload = {
             "model": "gpt-4o-mini",
@@ -310,26 +308,26 @@ def get_fallback_reply(stage, answers, results, language):
     """Fallback responses when OpenAI is unavailable."""
     heb = language == "Hebrew"
     
-    if stage == "greeting":
-        return "היי! 🎬 בואו נמצא סרט מושלם בשבילכם. איזה סגנון בא לכם לראות?" if heb else "Hi! 🎬 Let's find the perfect movie for you. What kind of movie interests you?"
-    
-    elif stage == "genre":
-        return "יופי! ועכשיו - באיזה שנה או עידן אתם רוצים סרט?" if heb else "Great! What era or year do you prefer?"
+    if stage == "genre":
+        return "איזה ז'אנר בא לכם? (דרמה, קומדיה, אקשן וכו')" if heb else "What genre? (drama, comedy, action, etc.)"
     
     elif stage == "year":
-        return "נחמד! האם יש פלטפורמה מסוימת?" if heb else "Nice! Do you have a streaming platform preference?"
+        return "מאיזה שנה? (למשל 2020 או 'אחרון')" if heb else "What year? (e.g., 2020 or 'recent')"
     
-    elif stage == "platform":
-        return "מעולה! עכשיו בואו נמצא לכם סרט 🎬" if heb else "Perfect! Let me find you a great movie 🎬"
+    elif stage == "occasion":
+        return "לאיזה הזדמנות? (דייט, חברים, משפחה וכו')" if heb else "What's the occasion? (date, friends, family, etc.)"
+    
+    elif stage == "reference":
+        return "יש סרט דומה שאתה אוהב?" if heb else "Is there a similar movie you love?"
     
     elif stage == "ready":
         if results:
             title = results[0]["title"]
-            return f"הנה ההמלצה שלי: {title}. בהנאה לצפייה! 🍿" if heb else f"Here's my recommendation: {title}. Enjoy! 🍿"
+            return f"הנה ההמלצה שלי: {title}. בהנאה! 🍿" if heb else f"Here's my recommendation: {title}. Enjoy! 🍿"
         else:
             return "לא מצאתי התאמה טובה. אנא נסו שוב עם העדפות אחרות." if heb else "I couldn't find a good match. Try different preferences."
     
-    return "מה הלאה?" if heb else "What next?"
+    return ""
 
 # ==============================================================
 # ROUTES
@@ -363,17 +361,17 @@ def chat():
         # Check for reset command
         if user_text.lower() in ["סרט חדש", "new movie", "מחדש", "reset", "סרט אחר"]:
             SESSIONS[session_id] = {
-                "stage": "greeting",
+                "stage": "genre",
                 "answers": {},
                 "done": False,
             }
             session = SESSIONS[session_id]
-            q = "היי, ברוכים הבאים ל-Cinemate 🎬 בואו נמצא יחד סרט שמתאים בדיוק למצב הרוח שלכם. נתחיל בקטנה: איזה סגנון בא לכם לראות?" if language == "Hebrew" else "Hi, welcome to Cinemate 🎬 Let's find a movie that perfectly matches your mood. Let's start: What kind of movie would you like to see?"
-            return jsonify({"reply": q, "results": [], "stage": "greeting", "reset": True})
+            q = "בואו נמצא סרט מושלם! איזה ז'אנר או סגנון בא לכם לראות?" if language == "Hebrew" else "Let's find a perfect movie! What genre or style are you in the mood for?"
+            return jsonify({"reply": q, "results": [], "stage": "genre", "reset": True})
         
         # Empty message - just ask next question
         if not user_text:
-            q = call_openai_safe(user_text, stage, answers, [], language)
+            q = get_next_question(stage, answers, language)
             return jsonify({"reply": q, "results": [], "stage": stage})
         
         # If we've already given a recommendation and user is asking something else, just answer naturally
@@ -382,30 +380,39 @@ def chat():
             return jsonify({"reply": reply, "results": [], "stage": "done"})
         
         # Parse input based on current stage
-        if stage == "greeting":
+        if stage == "genre":
             genres = extract_genres(user_text)
             if genres:
                 answers["genre"] = genres[0]  # Take first genre
-                session["stage"] = "genre_refinement"
-            else:
-                # Ask again
-                q = call_openai_safe(user_text, "genre", answers, [], language)
-                return jsonify({"reply": q, "results": [], "stage": "genre"})
-        
-        elif stage == "genre_refinement":
-            # Ask about year or context
+            # Move to next stage regardless of whether we found a genre
             session["stage"] = "year"
+            q = get_next_question("year", answers, language)
+            return jsonify({"reply": q, "results": [], "stage": "year"})
         
         elif stage == "year":
             year = extract_year(user_text)
             if year:
                 answers["year"] = year
-            session["stage"] = "platform"
+            # Move to next stage regardless
+            session["stage"] = "occasion"
+            q = get_next_question("occasion", answers, language)
+            return jsonify({"reply": q, "results": [], "stage": "occasion"})
         
-        elif stage == "platform":
-            platform = extract_platform(user_text)
-            if platform:
-                answers["platform"] = platform
+        elif stage == "occasion":
+            # Store occasion/context
+            if user_text and len(user_text) > 2:
+                answers["occasion"] = user_text
+            # Move to reference movie stage
+            session["stage"] = "reference"
+            q = get_next_question("reference", answers, language)
+            return jsonify({"reply": q, "results": [], "stage": "reference"})
+        
+        elif stage == "reference":
+            # Try to find reference movie
+            movie_title = find_movie_title(user_text)
+            if movie_title:
+                answers["reference"] = movie_title
+            # Ready to recommend - don't ask more questions
             session["stage"] = "ready"
         
         # At ready stage - generate recommendations
@@ -416,8 +423,8 @@ def chat():
             session["done"] = True  # Mark as done - user can now ask other questions
             return jsonify({"reply": reply, "results": results, "stage": "ready"})
         
-        # Ask next question
-        q = call_openai_safe(user_text, session["stage"], answers, [], language)
+        # Fallback
+        q = get_next_question(session["stage"], answers, language)
         return jsonify({"reply": q, "results": [], "stage": session["stage"]})
     
     except Exception as e:
@@ -426,9 +433,27 @@ def chat():
         return jsonify({
             "reply": "משהו השתבש. נסו שוב בעוד רגע." if is_hebrew(str(data.get("message", ""))) else "Something went wrong. Please try again.",
             "results": [],
-            "stage": "greeting",
+            "stage": "genre",
             "error": str(e)
         }), 500
+
+def get_next_question(stage, answers, language):
+    """Get the next question based on current stage."""
+    heb = language == "Hebrew"
+    
+    if stage == "genre":
+        return "איזה ז'אנר או סגנון בא לכם לראות? (דרמה, קומדיה, אקשן, רומנטיקה וכו')" if heb else "What genre or style would you like? (drama, comedy, action, romance, etc.)"
+    
+    elif stage == "year":
+        return "מאיזה שנה הסרט? (למשל 2020, או שנות ה-2010, או 'אחרון')" if heb else "What year? (e.g., 2020, 2010s, or 'recent')"
+    
+    elif stage == "occasion":
+        return "לאיזה הזדמנות או אירוע? (דייט, ערב עם חברים, משפחה, ערב בודד וכו')" if heb else "What's the occasion? (date night, with friends, family, solo night, etc.)"
+    
+    elif stage == "reference":
+        return "יש לך סרט שאהבת שמתאים למה שאתה מחפש? (אם אין בסדר - כתוב 'לא')" if heb else "Is there a movie you loved that's similar to what you're looking for? (or write 'no')"
+    
+    return ""
 
 # ==============================================================
 # HTML UI - ORIGINAL DESIGN PRESERVED EXACTLY
@@ -876,7 +901,7 @@ header {{
 
       <div class="msg bot">
 
-        <div class="bubble">היי, ברוכים הבאים ל-Cinemate 🎬 בואו נמצא יחד סרט שמתאים בדיוק למצב הרוח שלכם. נתחיל בקטנה: איזה סגנון בא לכם לראות?</div>
+        <div class="bubble">היי, ברוכים הבאים ל-Cinemate 🎬 בואו נמצא יחד סרט שמתאים למצב הרוח שלכם. איזה ז'אנר או סגנון בא לכם לראות?</div>
 
       </div>
 
