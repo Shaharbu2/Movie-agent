@@ -511,20 +511,31 @@ MOVIE_WORDS = [
 
 
 
-
 def is_smalltalk(text):
-
     t = clean_text(text)
 
     if not t:
+        return False
 
-        return True
+    exact_smalltalk = {
+        "היי",
+        "הי",
+        "שלום",
+        "מה נשמע",
+        "מה שלומך",
+        "מה קורה",
+        "בוקר טוב",
+        "ערב טוב",
+        "צהריים טובים",
+        "hi",
+        "hello",
+        "hey",
+        "how are you",
+        "good morning",
+        "good evening"
+    }
 
-    return any(p in t for p in SMALLTALK_PATTERNS) and not any(w in t for w in MOVIE_WORDS)
-
-
-
-
+    return t in exact_smalltalk
 
 def extract_genres(text):
 
