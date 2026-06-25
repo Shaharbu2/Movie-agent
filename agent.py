@@ -90,6 +90,45 @@ def clean_text(text):
     text = re.sub(r"[^a-z0-9\u0590-\u05FF\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
+
+def is_casual_smalltalk(text):
+    """Allow everyday conversation without treating it as a movie preference."""
+    t = clean_text(text)
+    smalltalk_exact = {
+        "hi", "hello", "hey", "how are you", "whats up", "what s up",
+        "good morning", "good evening",
+        "היי", "הי", "שלום", "מה נשמע", "מה שלומך", "מה קורה",
+        "בוקר טוב", "ערב טוב", "צהריים טובים"
+    }
+    return t in smalltalk_exact
+
+def is_out_of_scope(text):
+    """Block clearly unrelated questions, but keep normal movie answers flowing."""
+    t = clean_text(text)
+    unrelated = [
+        "weather", "forecast", "temperature", "rain", "salary", "excel", "politics",
+        "news", "stock", "recipe", "football", "basketball", "bank", "tax",
+        "python", "sql", "code", "programming", "restaurant", "food",
+        "מזג", "מזג אוויר", "תחזית", "גשם", "טמפרטורה", "שכר", "משכורת",
+        "אקסל", "פוליטיקה", "חדשות", "מניות", "מתכון", "כדורגל", "כדורסל",
+        "בנק", "מס", "מיסים", "פייתון", "קוד", "תכנות", "מסעדה", "אוכל"
+    ]
+    return any(x in t for x in unrelated)
+
+def out_of_scope_reply(language):
+    if language == "Hebrew":
+        return "מצטער 😊 אני כאן כדי לעזור לבחור סרטים בלבד 🎬 ספרו לי איזה סגנון, שנה או פלטפורמה מעניינים אתכם."
+    return "Sorry 😊 I’m here to help with movie recommendations only 🎬 Tell me what style, year, or platform you’re looking for."
+
+def casual_smalltalk_reply(language, stage, answers):
+    if language == "Hebrew":
+        if stage == "greeting" and not answers:
+            return "היי 😊 כיף שהגעתם. נתחיל בכיוון כללי — איזה סגנון סרט בא לכם לראות?"
+        return "הכול מצוין 😊 נחזור לסרטים — מה הכיוון שמתאים לכם כרגע?"
+    if stage == "greeting" and not answers:
+        return "Hi 😊 Happy you’re here. Let’s start with the mood — what kind of movie are you in the mood for?"
+    return "Doing great 😊 Let’s get back to movies — what direction feels right for you now?"
+
 # Genre mapping
 GENRE_KEYWORD_MAP = {
     "action": "Action", "אקשן": "Action",
@@ -245,18 +284,40 @@ def call_openai_safe(user_text, stage, answers, results, language, is_post_recom
             for r in results[:1]:
                 recs_block += f"- {r['title']} ({r['year']}), {r['genres']}, ⭐{r['rating']}/10\n"
         
-        system_prompt = f"""You are Cinemate, a friendly movie recommendation chatbot.
-Your role is to guide users through finding the perfect movie by asking questions one at a time.
+        system_prompt = f"""You are Cinemate, a warm, conversational movie recommendation agent.
+Your job is to guide the user toward one suitable movie while sounding natural, not like a fixed form.
 
-Rules:
-- Ask ONE question at a time
-- Be warm and conversational
-- Respond in {language}
-- Never invent movies
-- Only recommend from dataset results
-- Keep responses brief (1-2 sentences)
-- After recommending a movie, you can continue having normal conversations
-- Only give new recommendations if the user specifically asks for another movie"""
+Core behavior:
+- Respond in {language}.
+- Ask only ONE question at a time.
+- Vary your wording naturally. Do not repeat the same exact question every time.
+- The code may tell you the current stage, but you should phrase the question like a friendly movie expert.
+- Keep every answer short: 1-2 sentences.
+- You may respond to brief small talk naturally, then gently return to movies.
+
+Guided question style:
+- Ask broad, useful questions only.
+- Good directions: preferred style/vibe, approximate year or era, available streaming platform, viewing occasion, or a movie the user liked.
+- Avoid narrow questions like: "what type of comedy do you prefer?" or "what type of drama?"
+- Better examples:
+  Hebrew: "איזה סגנון או וייב בא לכם לראות היום?"
+  Hebrew: "מאיזו שנה או תקופה בערך תרצו את הסרט?"
+  Hebrew: "באיזו פלטפורמת צפייה הסרט צריך להיות זמין?"
+  English: "What kind of vibe are you in the mood for?"
+  English: "Around what year or era should it be from?"
+  English: "Which streaming platform should it be available on?"
+
+Dataset and recommendation rules:
+- Recommendations must come ONLY from the dataset results provided to you.
+- Never invent movie titles.
+- Never recommend from your own knowledge.
+- If no dataset result is provided, say that no suitable match was found and suggest changing the style, year, or platform.
+- When a movie result is provided, recommend only that one movie.
+- Since the movie card appears separately, keep the text short and do not list extra movies.
+
+Out-of-scope rule:
+- If the user asks about anything unrelated to movies, politely say you are here to help with movie recommendations only, and guide them back to choosing a movie.
+"""
         
         if stage == "ready":
             user_prompt = f"""User preferences: {context_str}
@@ -269,13 +330,38 @@ Present this recommendation warmly. Explain briefly why it fits their preference
             user_prompt = f"""You already recommended a movie to this user.
 Now they are asking: {user_text}
 
-Just answer their question naturally as a helpful assistant. Don't try to recommend another movie unless they specifically ask for one."""
+Answer naturally, but stay within the movie recommendation role. If the question is unrelated to movies, politely say you are here to help with movie recommendations only. Don't recommend another movie unless they specifically ask for one."""
         else:
+            if stage in ["greeting", "genre"]:
+                next_question_instruction = (
+                    "The next missing detail is the user's broad preferred style or vibe. "
+                    "Ask naturally and vary the wording. Do not ask about a sub-genre. "
+                    "Do not use a fixed template."
+                )
+            elif stage == "year":
+                next_question_instruction = (
+                    "The next missing detail is approximate year or era. "
+                    "Ask naturally whether they prefer recent movies, older/classic movies, a specific year, or no preference. "
+                    "Do not use a fixed template."
+                )
+            elif stage == "platform":
+                next_question_instruction = (
+                    "The next missing detail is streaming availability. "
+                    "Ask naturally which platform is available to them: Netflix, Disney+, Prime Video, Hulu, or no preference. "
+                    "Do not use a fixed template."
+                )
+            else:
+                next_question_instruction = (
+                    "Ask the single most useful broad movie-preference question. "
+                    "Keep it natural, varied, and focused on choosing a movie."
+                )
+
             user_prompt = f"""Current conversation stage: {stage}
 User said: {user_text}
 What we know: {context_str}
 
-Ask the next natural question about their movie preferences. One question only."""
+{next_question_instruction}
+Ask only one short question. Do not recommend a movie yet."""
         
         payload = {
             "model": "gpt-4o-mini",
@@ -314,13 +400,13 @@ def get_fallback_reply(stage, answers, results, language):
         return "היי! 🎬 בואו נמצא סרט מושלם בשבילכם. איזה סגנון בא לכם לראות?" if heb else "Hi! 🎬 Let's find the perfect movie for you. What kind of movie interests you?"
     
     elif stage == "genre":
-        return "יופי! ועכשיו - באיזה שנה או עידן אתם רוצים סרט?" if heb else "Great! What era or year do you prefer?"
+        return "איזה סגנון מועדף עליך? למשל קומדיה, אימה, אקשן, רומנטי או משהו קליל." if heb else "What style are you in the mood for? For example comedy, horror, action, romance, or something light."
     
     elif stage == "year":
-        return "נחמד! האם יש פלטפורמה מסוימת?" if heb else "Nice! Do you have a streaming platform preference?"
+        return "מאיזו שנה בערך תרצה את הסרט? אפשר גם לכתוב חדשים, ישנים או אין העדפה." if heb else "Around what year or era would you like? You can also say recent, older, or no preference."
     
     elif stage == "platform":
-        return "מעולה! עכשיו בואו נמצא לכם סרט 🎬" if heb else "Perfect! Let me find you a great movie 🎬"
+        return "באיזו פלטפורמת צפייה תרצה שהסרט יהיה זמין? Netflix, Disney+, Prime Video, Hulu או אין העדפה." if heb else "Which streaming platform should it be available on? Netflix, Disney+, Prime Video, Hulu, or no preference."
     
     elif stage == "ready":
         if results:
@@ -376,6 +462,15 @@ def chat():
             q = call_openai_safe(user_text, stage, answers, [], language)
             return jsonify({"reply": q, "results": [], "stage": stage})
         
+        # Everyday small talk is allowed and should not be saved as a movie answer.
+        if is_casual_smalltalk(user_text):
+            reply = casual_smalltalk_reply(language, stage, answers)
+            return jsonify({"reply": reply, "results": [], "stage": stage})
+
+        # Unrelated questions are politely blocked.
+        if is_out_of_scope(user_text):
+            return jsonify({"reply": out_of_scope_reply(language), "results": [], "stage": stage})
+
         # If we've already given a recommendation and user is asking something else, just answer naturally
         if session.get("done"):
             reply = call_openai_safe(user_text, "post_recommendation", answers, [], language, is_post_recommendation=True)
@@ -386,15 +481,18 @@ def chat():
             genres = extract_genres(user_text)
             if genres:
                 answers["genre"] = genres[0]  # Take first genre
-                session["stage"] = "genre_refinement"
+                session["stage"] = "year"
             else:
                 # Ask again
                 q = call_openai_safe(user_text, "genre", answers, [], language)
                 return jsonify({"reply": q, "results": [], "stage": "genre"})
         
         elif stage == "genre_refinement":
-            # Ask about year or context
-            session["stage"] = "year"
+            # Backward compatibility: older sessions may still be here. Treat the answer as year/era.
+            year = extract_year(user_text)
+            if year:
+                answers["year"] = year
+            session["stage"] = "platform"
         
         elif stage == "year":
             year = extract_year(user_text)
