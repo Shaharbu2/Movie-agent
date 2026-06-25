@@ -1556,26 +1556,41 @@ def chat():
     key = get_conversation_key()
     heb = is_hebrew(user_text) if user_text else True
 
-    reset_requested = wants_reset(user_text)
-
-    if key not in CONVERSATIONS or reset_requested:
+    if key not in CONVERSATIONS:
         CONVERSATIONS[key] = new_state()
 
     state = CONVERSATIONS[key]
 
-    if reset_requested and user_text:
+    # Explicit restart: reset and start the guided interview again.
+    if wants_reset(user_text):
+        CONVERSATIONS[key] = new_state()
         q = interview_question(0, heb)
         return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": [], "reset": True})
 
+    # Empty message / page ping: do not consume an interview answer.
     if not user_text:
-        result = {"intent": "interview_question", "reply": interview_question(0, heb), "results": []}
-        return jsonify(result)
+        q = interview_question(state.get("step", 0), heb) if not state.get("done") else (
+            "היי 🎬 רוצה שנתחיל חיפוש חדש או שאציע עוד סרט לפי הבחירות הקודמות?" if heb else
+            "Hi 🎬 Would you like to start a new search or get one more movie based on your previous choices?"
+        )
+        return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": []})
 
+    # Friendly small talk is allowed. It should NOT be saved as genre/year/platform.
+    if is_smalltalk(user_text):
+        if not state.get("done"):
+            q = interview_question(state.get("step", 0), heb)
+            reply = ("היי! כיף שאתה כאן 🎬 " + q) if heb else ("Hi! Happy you’re here 🎬 " + q)
+            return jsonify({"intent": "interview_question", "reply": reply, "question": q, "results": []})
+        reply = "היי 🎬 אפשר להמשיך לעוד המלצה, או לכתוב 'סרט חדש' ולהתחיל מחדש." if heb else "Hi 🎬 We can continue with one more recommendation, or type 'new movie' to start again."
+        return jsonify({"intent": "smalltalk", "reply": reply, "results": []})
+
+    # Off-topic guardrail: only block clearly unrelated questions.
     if maybe_out_of_scope_during_interview(user_text):
         result = handle_out_of_scope(user_text)
         result["reply"] = fallback_reply(user_text, result)
         return jsonify(result)
 
+    # Guided interview mode: collect one answer at a time and ask the next question.
     if not state.get("done"):
         state = save_interview_answer(state, user_text)
         CONVERSATIONS[key] = state
@@ -1585,28 +1600,32 @@ def chat():
             return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": []})
 
         result = recommend_from_state(state, user_text)
-        result["reply"] = call_openai(user_text, result)
+        result["reply"] = fallback_reply(user_text, result)
         return jsonify(result)
 
+    # After a recommendation, "yes / more" means one additional movie from the same query.
     if wants_more(user_text):
         result = recommend_from_state(state, user_text)
         CONVERSATIONS[key] = state
-        result["reply"] = call_openai(user_text, result)
+        result["reply"] = fallback_reply(user_text, result)
         return jsonify(result)
 
-    intent, payload = detect_intent(user_text)
-    if intent == "similar":
-        result = handle_similar(payload, user_text, top_n=1, exclude_titles=state.get("shown_titles", []))
-    elif intent == "anomaly":
-        result = handle_anomaly(user_text, top_n=1)
-    elif intent == "cluster_info":
-        result = handle_cluster_info(user_text)
-    elif is_movie_related(user_text):
-        result = handle_search(user_text, top_n=1, exclude_titles=state.get("shown_titles", []))
-    else:
-        result = handle_out_of_scope(user_text)
+    # If the user says no, finish politely without forcing more questions.
+    if is_none_answer(user_text):
+        reply = "סבבה 🎬 כשתרצה סרט חדש פשוט כתוב 'סרט חדש'." if heb else "No problem 🎬 When you want a new movie, just type 'new movie'."
+        return jsonify({"intent": "smalltalk", "reply": reply, "results": []})
 
-    result["reply"] = call_openai(user_text, result)
+    # If the previous interview is done and the user gives a new movie preference
+    # (for example "קומדיה"), start a NEW guided interview instead of recommending immediately.
+    if is_movie_related(user_text):
+        state = new_state()
+        state = save_interview_answer(state, user_text)
+        CONVERSATIONS[key] = state
+        q = interview_question(state["step"], heb)
+        return jsonify({"intent": "interview_question", "reply": q, "question": q, "results": [], "new_interview": True})
+
+    result = handle_out_of_scope(user_text)
+    result["reply"] = fallback_reply(user_text, result)
     return jsonify(result)
 
 
@@ -2060,7 +2079,7 @@ header {{
 
       <div class="msg bot">
 
-        <div class="bubble">ברוכים הבאים ל-Cinemate 🎬 בואו נמצא יחד את הסרט המושלם. נתחיל: איזה סוג סרט בא לכם לראות?</div>
+        <div class="bubble">היי, ברוכים הבאים ל-Cinemate 🎬 בואו נמצא יחד סרט שמתאים בדיוק למצב הרוח שלכם. נתחיל בקטנה: איזה סגנון בא לכם לראות?</div>
 
       </div>
 
@@ -2089,7 +2108,7 @@ const chat = document.getElementById('chat');
 const inp = document.getElementById('inp');
 
 const btn = document.getElementById('btn');
-const sessionId = localStorage.getItem('cinemate_session') || crypto.randomUUID();
+const sessionId = crypto.randomUUID();
 localStorage.setItem('cinemate_session', sessionId);
 
 
