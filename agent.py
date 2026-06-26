@@ -91,6 +91,39 @@ def clean_text(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def normalize_user_text(text):
+    """Light typo normalization for common movie-related spelling mistakes."""
+    text = str(text).strip()
+    replacements = {
+        "קודמיה": "קומדיה",
+        "קומדי": "קומדיה",
+        "קומדיא": "קומדיה",
+        "איימה": "אימה",
+        "אימהה": "אימה",
+        "אקשין": "אקשן",
+        "רומנתי": "רומנטי",
+        "דרמא": "דרמה",
+        "נטפליס": "נטפליקס",
+        "נטפליכס": "נטפליקס",
+        "דסני": "דיסני",
+        "סרת": "סרט",
+        "comedey": "comedy",
+        "commedy": "comedy",
+        "comdy": "comedy",
+        "horor": "horror",
+        "horrer": "horror",
+        "romace": "romance",
+        "rommance": "romance",
+        "actoin": "action",
+        "netfix": "netflix",
+        "netflx": "netflix",
+        "disny": "disney",
+    }
+    for wrong, right in replacements.items():
+        text = re.sub(re.escape(wrong), right, text, flags=re.IGNORECASE)
+    return text
+
+
 def is_casual_smalltalk(text):
     """Allow everyday conversation without treating it as a movie preference."""
     t = clean_text(text)
@@ -100,25 +133,65 @@ def is_casual_smalltalk(text):
         "היי", "הי", "שלום", "מה נשמע", "מה שלומך", "מה קורה",
         "בוקר טוב", "ערב טוב", "צהריים טובים"
     }
-    return t in smalltalk_exact
+
+    if t in smalltalk_exact:
+        return True
+
+    # Allow short combined greetings like "היי מה קורה" or "hey how are you",
+    # but do not treat corrective sentences like "לא שאלתי מה שלומך אבל" as small talk.
+    if t.startswith(("לא ", "no ", "not ")):
+        return False
+
+    tokens = t.split()
+    if len(tokens) <= 4:
+        return any(p in t for p in smalltalk_exact)
+
+    return False
 
 def is_out_of_scope(text):
     """Block clearly unrelated questions, but keep normal movie answers flowing."""
     t = clean_text(text)
-    unrelated = [
+    tokens = set(t.split())
+
+    # Multi-word phrases can be checked as substrings.
+    phrase_unrelated = [
+        "מזג אוויר", "what is the weather", "how is the weather"
+    ]
+    if any(p in t for p in phrase_unrelated):
+        return True
+
+    # Single-word unrelated topics must match whole tokens only.
+    # Important: do NOT use substring matching for words like "קוד",
+    # because a typo like "קודמיה" should not be blocked.
+    word_unrelated = {
         "weather", "forecast", "temperature", "rain", "salary", "excel", "politics",
         "news", "stock", "recipe", "football", "basketball", "bank", "tax",
-        "python", "sql", "code", "programming", "restaurant", "food",
-        "מזג", "מזג אוויר", "תחזית", "גשם", "טמפרטורה", "שכר", "משכורת",
+        "python", "sql", "programming", "restaurant", "food", "code",
+        "מזג", "תחזית", "גשם", "טמפרטורה", "שכר", "משכורת",
         "אקסל", "פוליטיקה", "חדשות", "מניות", "מתכון", "כדורגל", "כדורסל",
-        "בנק", "מס", "מיסים", "פייתון", "קוד", "תכנות", "מסעדה", "אוכל"
-    ]
-    return any(x in t for x in unrelated)
+        "בנק", "מס", "מיסים", "פייתון", "תכנות", "מסעדה", "אוכל"
+    }
+    return bool(tokens & word_unrelated)
 
 def out_of_scope_reply(language):
     if language == "Hebrew":
         return "מצטער 😊 אני כאן כדי לעזור לבחור סרטים בלבד 🎬 ספרו לי איזה סגנון, שנה או פלטפורמה מעניינים אתכם."
     return "Sorry 😊 I’m here to help with movie recommendations only 🎬 Tell me what style, year, or platform you’re looking for."
+
+
+def is_new_movie_request(text):
+    """Detect when the user wants to start a new movie recommendation after a previous result."""
+    t = clean_text(text)
+    movie_words = {
+        "movie", "film", "recommend", "recommendation", "another", "comedy", "drama",
+        "horror", "romance", "action", "thriller", "netflix", "disney", "prime",
+        "סרט", "סרטים", "המלצה", "תמליץ", "קומדיה", "דרמה", "אימה",
+        "אקשן", "רומנטי", "מתח", "נטפליקס", "דיסני", "פריים", "עוד"
+    }
+    if extract_genres(text) or extract_year(text) or extract_platform(text):
+        return True
+    return any(w in t.split() for w in movie_words) or any(w in t for w in ["אני רוצה", "בא לי", "אפשר"])
+
 
 def casual_smalltalk_reply(language, stage, answers):
     if language == "Hebrew":
@@ -437,7 +510,7 @@ def health():
 def chat():
     try:
         data = request.get_json() or {}
-        user_text = str(data.get("message", "")).strip()
+        user_text = normalize_user_text(data.get("message", ""))
         session_id = request.headers.get('X-Session-Id', 'default')
         
         # Get session
@@ -471,11 +544,23 @@ def chat():
         if is_out_of_scope(user_text):
             return jsonify({"reply": out_of_scope_reply(language), "results": [], "stage": stage})
 
-        # If we've already given a recommendation and user is asking something else, just answer naturally
+        # If we already gave a recommendation, allow the user to start a new movie request naturally.
+        # Example: "אני רוצה גם סרט קומדיה" should begin a fresh recommendation flow,
+        # not be treated as random post-recommendation chat.
         if session.get("done"):
-            reply = call_openai_safe(user_text, "post_recommendation", answers, [], language, is_post_recommendation=True)
-            return jsonify({"reply": reply, "results": [], "stage": "done"})
-        
+            if is_new_movie_request(user_text):
+                SESSIONS[session_id] = {
+                    "stage": "greeting",
+                    "answers": {},
+                    "done": False,
+                }
+                session = SESSIONS[session_id]
+                stage = session["stage"]
+                answers = session["answers"]
+            else:
+                reply = call_openai_safe(user_text, "post_recommendation", answers, [], language, is_post_recommendation=True)
+                return jsonify({"reply": reply, "results": [], "stage": "done"})
+
         # Parse input based on current stage
         if stage == "greeting":
             genres = extract_genres(user_text)
