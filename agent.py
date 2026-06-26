@@ -96,6 +96,7 @@ def normalize_user_text(text):
     text = str(text).strip()
     replacements = {
         "קודמיה": "קומדיה",
+        "משו": "משהו",
         "קומדי": "קומדיה",
         "קומדיא": "קומדיה",
         "איימה": "אימה",
@@ -205,7 +206,7 @@ def casual_smalltalk_reply(language, stage, answers):
 # Genre mapping
 GENRE_KEYWORD_MAP = {
     "action": "Action", "אקשן": "Action",
-    "comedy": "Comedy", "קומדיה": "Comedy",
+    "comedy": "Comedy", "קומדיה": "Comedy", "מצחיק": "Comedy", "מצחיקה": "Comedy", "משעשע": "Comedy",
     "drama": "Drama", "דרמה": "Drama",
     "horror": "Horror", "אימה": "Horror",
     "romance": "Romance", "רומנטי": "Romance",
@@ -214,6 +215,7 @@ GENRE_KEYWORD_MAP = {
     "adventure": "Adventure", "הרפתקה": "Adventure",
     "fantasy": "Fantasy", "פנטזיה": "Fantasy",
     "mystery": "Mystery", "מסתורין": "Mystery",
+    "family": "Family", "משפחה": "Family", "משפחתי": "Family", "לכל המשפחה": "Family",
 }
 
 PLATFORM_PATTERNS = {
@@ -234,6 +236,18 @@ def extract_genres(text):
 def extract_year(text):
     m = re.search(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", text)
     return int(m.group(1)) if m else None
+
+
+def extract_year_or_era(text):
+    """Return a concrete lower-bound year when the user gives a year or says recent/new."""
+    year = extract_year(text)
+    if year:
+        return year
+    t = clean_text(text)
+    recent_words = ["חדש", "חדשים", "חדשה", "מודרני", "מודרניים", "מהשנים האחרונות", "recent", "new", "modern", "latest"]
+    if any(w in t for w in recent_words):
+        return 2020
+    return None
 
 def extract_platform(text):
     t = text.lower()
@@ -281,6 +295,7 @@ def get_or_create_session(session_id):
             "stage": "greeting",
             "answers": {},
             "done": False,  # Track if we've made a recommendation
+            "language": None,
         }
     return SESSIONS[session_id]
 
@@ -371,7 +386,8 @@ Core behavior:
 Guided question style:
 - Ask broad, useful questions only.
 - Good directions: preferred style/vibe, approximate year or era, available streaming platform, viewing occasion, or a movie the user liked.
-- Avoid narrow questions like: "what type of comedy do you prefer?" or "what type of drama?"
+- Avoid narrow follow-up questions like: "what type of comedy do you prefer?", "what type of humor do you like?", or "what type of drama?"
+- After the user gives a broad style/genre, do NOT ask for a sub-genre. Move on to year/era or platform.
 - Better examples:
   Hebrew: "איזה סגנון או וייב בא לכם לראות היום?"
   Hebrew: "מאיזו שנה או תקופה בערך תרצו את הסרט?"
@@ -387,6 +403,8 @@ Dataset and recommendation rules:
 - If no dataset result is provided, say that no suitable match was found and suggest changing the style, year, or platform.
 - When a movie result is provided, recommend only that one movie.
 - Since the movie card appears separately, keep the text short and do not list extra movies.
+- Do NOT mention the movie title, year, rating, streaming platform, or plot in your written reply; the card already shows those details.
+- Your recommendation text should be one short natural sentence explaining the fit, then ask if they want another recommendation.
 
 Out-of-scope rule:
 - If the user asks about anything unrelated to movies, politely say you are here to help with movie recommendations only, and guide them back to choosing a movie.
@@ -398,7 +416,7 @@ Out-of-scope rule:
 Movie to recommend:
 {recs_block}
 
-Present this recommendation warmly. Explain briefly why it fits their preferences."""
+Present this recommendation warmly in ONE short sentence, but do NOT mention the movie title, year, rating, platform, or plot because the card already displays them. Then ask if they want another recommendation."""
         elif is_post_recommendation:
             user_prompt = f"""You already recommended a movie to this user.
 Now they are asking: {user_text}
@@ -517,7 +535,15 @@ def chat():
         session = get_or_create_session(session_id)
         stage = session["stage"]
         answers = session["answers"]
-        language = "Hebrew" if is_hebrew(user_text) else "English"
+        # Keep the conversation language stable. Numeric answers like "2020" should not switch the bot to English.
+        if is_hebrew(user_text):
+            language = "Hebrew"
+            session["language"] = "Hebrew"
+        elif session.get("language"):
+            language = session["language"]
+        else:
+            language = "English"
+            session["language"] = "English"
         
         # Check for reset command
         if user_text.lower() in ["סרט חדש", "new movie", "מחדש", "reset", "סרט אחר"]:
@@ -525,6 +551,7 @@ def chat():
                 "stage": "greeting",
                 "answers": {},
                 "done": False,
+                "language": language,
             }
             session = SESSIONS[session_id]
             q = "היי, ברוכים הבאים ל-Cinemate 🎬 בואו נמצא יחד סרט שמתאים בדיוק למצב הרוח שלכם. נתחיל בקטנה: איזה סגנון בא לכם לראות?" if language == "Hebrew" else "Hi, welcome to Cinemate 🎬 Let's find a movie that perfectly matches your mood. Let's start: What kind of movie would you like to see?"
@@ -553,6 +580,7 @@ def chat():
                     "stage": "greeting",
                     "answers": {},
                     "done": False,
+                    "language": language,
                 }
                 session = SESSIONS[session_id]
                 stage = session["stage"]
@@ -574,13 +602,13 @@ def chat():
         
         elif stage == "genre_refinement":
             # Backward compatibility: older sessions may still be here. Treat the answer as year/era.
-            year = extract_year(user_text)
+            year = extract_year_or_era(user_text)
             if year:
                 answers["year"] = year
             session["stage"] = "platform"
         
         elif stage == "year":
-            year = extract_year(user_text)
+            year = extract_year_or_era(user_text)
             if year:
                 answers["year"] = year
             session["stage"] = "platform"
