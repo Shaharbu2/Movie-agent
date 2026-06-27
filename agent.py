@@ -575,7 +575,38 @@ def chat():
         # Example: "אני רוצה גם סרט קומדיה" should begin a fresh recommendation flow,
         # not be treated as random post-recommendation chat.
         if session.get("done"):
-            if is_new_movie_request(user_text):
+            positive_answers = {
+                "כן", "כן!", "בטח", "ברור", "יאללה", "אשמח", "כן בבקשה",
+                "yes", "yeah", "yep", "sure", "ok", "okay"
+            }
+
+            if clean_text(user_text) in positive_answers:
+                results = recommend_movies(answers, top_n=2)
+
+                if len(results) > 1:
+                    results = [results[1]]
+                elif len(results) == 1:
+                    results = [results[0]]
+                else:
+                    return jsonify({
+                        "reply": "לא מצאתי המלצה נוספת." if language == "Hebrew" else "I couldn't find another recommendation.",
+                        "results": [],
+                        "stage": "done"
+                    })
+
+                reply = (
+                    "בשמחה! הנה עוד סרט שעשוי להתאים לך 🎬"
+                    if language == "Hebrew"
+                    else "Sure! Here's another movie you might enjoy 🎬"
+                )
+
+                return jsonify({
+                    "reply": reply,
+                    "results": results,
+                    "stage": "ready"
+                })
+
+            elif is_new_movie_request(user_text):
                 SESSIONS[session_id] = {
                     "stage": "greeting",
                     "answers": {},
